@@ -31,7 +31,7 @@ export default function FloatingContactButtons() {
   const [isChatMinimized, setIsChatMinimized] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
 
-  const backendApiUrl = process.env.NEXT_PUBLIC_CHAT_API_URL || "http://localhost:4000/api";
+  const backendApiUrl = process.env.NEXT_PUBLIC_CHAT_API_URL || "/api/chat";
 
   const toggleChat = useCallback(() => {
     if (isChatMinimized) {

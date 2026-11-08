@@ -1,9 +1,12 @@
 import { NextResponse } from "next/server";
 
-const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:4000";
+const BACKEND_URL = process.env.BACKEND_URL;
 
 // Uploads are streamed by app/api/admin/uploads so the catch-all never buffers files.
 async function proxy(request: Request, context: RouteContext<"/api/admin/[...path]">) {
+  if (!BACKEND_URL) {
+    return NextResponse.json({ ok: false, message: "Backend URL not configured" }, { status: 500 });
+  }
   const { path } = await context.params;
   const cookieHeader = request.headers.get("cookie");
   const search = new URL(request.url).search;

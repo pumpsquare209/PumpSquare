@@ -33,14 +33,14 @@ export function getSupabaseClient(): SupabaseClient {
   return createClient(url, anonKey);
 }
 
-export async function adminQuery<T>(queryFn: (client: SupabaseClient) => Promise<{ data: T; error: any }>): Promise<T> {
+export async function adminQuery<T>(queryFn: (client: SupabaseClient) => Promise<{ data: T; error: unknown }>): Promise<T> {
   const client = getSupabaseAdmin();
   const { data, error } = await queryFn(client);
   if (error) throw error;
   return data;
 }
 
-export async function adminQueryOne<T>(queryFn: (client: SupabaseClient) => Promise<{ data: T | null; error: any }>) {
+export async function adminQueryOne<T>(queryFn: (client: SupabaseClient) => Promise<{ data: T | null; error: unknown }>) {
   const data = await adminQuery(queryFn);
   return data as T;
 }

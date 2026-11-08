@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import { z } from "zod";
 import { ADMIN_ROLES } from "@/lib/auth/roles";
 
-const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:4000";
+const BACKEND_URL = process.env.BACKEND_URL;
 
 export type TeamMember = {
   id: string;
@@ -29,9 +29,10 @@ async function backend(path: string, options: RequestInit = {}) {
     cache: "no-store",
   });
 
-  const data = (await response.json().catch(() => ({}))) as Record<string, any>;
+  const data = (await response.json().catch(() => ({}))) as Record<string, unknown>;
   if (!response.ok || data.ok === false) {
-    throw new TeamError(data.message || "Request failed.");
+    const message = typeof data.message === "string" ? data.message : "Request failed.";
+    throw new TeamError(message);
   }
   return data;
 }

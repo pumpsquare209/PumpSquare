@@ -2,7 +2,7 @@ import "server-only";
 import { cookies } from "next/headers";
 import { AdminRole } from "@/lib/auth/roles";
 
-const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:4000";
+const BACKEND_URL = process.env.BACKEND_URL;
 const SESSION_COOKIE = "psq_admin_session";
 
 export type AdminUser = {

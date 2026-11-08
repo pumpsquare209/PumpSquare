@@ -326,6 +326,7 @@ export default function Pump3DViewer() {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Initial WebGL capability check
     setWebglSupported(checkWebGLSupport());
   }, []);
 

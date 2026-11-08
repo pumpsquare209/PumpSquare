@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 
-const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:4000";
+const BACKEND_URL = process.env.BACKEND_URL;
 
 // A reloading backend can reset the first connection; one retry keeps sign-in reliable.
 async function login(body: string) {
+  if (!BACKEND_URL) throw new Error("Backend URL not configured");
   for (let attempt = 0; ; attempt++) {
     try {
       return await fetch(`${BACKEND_URL}/api/admin/auth/login`, {
@@ -20,6 +21,9 @@ async function login(body: string) {
 
 export async function POST(request: Request) {
   try {
+    if (!BACKEND_URL) {
+      return NextResponse.json({ ok: false, code: "SERVER_ERROR", message: "Backend URL not configured" }, { status: 500 });
+    }
     const body = await request.json();
     const response = await login(JSON.stringify(body));
 

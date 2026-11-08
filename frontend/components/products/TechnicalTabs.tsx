@@ -19,6 +19,12 @@ import { tabDisplayName } from "@/lib/review-tabs";
 import { useReducedMotion } from "@/lib/use-reduced-motion";
 import { cn } from "@/lib/utils";
 
+declare global {
+  interface Window {
+    __ticks?: number;
+  }
+}
+
 const AUTOPLAY_MS = 5000;
 const TOUCH_RESUME_MS = 8000;
 

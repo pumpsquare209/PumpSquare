@@ -11,7 +11,7 @@ import type {
 } from "@/lib/products";
 import { withAbsoluteImages } from "@/lib/public-assets";
 
-const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:4000";
+const BACKEND_URL = process.env.BACKEND_URL;
 
 async function fetchBackend(path: string, options: RequestInit = {}): Promise<unknown> {
   const url = `${BACKEND_URL}/api${path}`;

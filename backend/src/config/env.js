@@ -5,7 +5,7 @@ const envSchema = z.object({
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
   SARVAM_API_KEY: z.string().min(10, "SARVAM_API_KEY appears invalid"),
   SARVAM_MODEL: z.string().default("sarvam-105b"),
-  FRONTEND_ORIGIN: z.string().url().default("http://localhost:3000"),
+  FRONTEND_ORIGIN: z.string().url(),
   CHAT_MAX_HISTORY: z.coerce.number().int().positive().default(12),
   CHAT_RATE_LIMIT: z.coerce.number().int().positive().default(10),
   SUPABASE_URL: z.string().url(),

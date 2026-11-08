@@ -12,7 +12,9 @@ export function withAbsoluteImages<T extends WithImage>(product: T): T {
   const image = product.image;
   if (!image || /^https?:\/\//i.test(image)) return product;
   try {
-    return { ...product, image: new URL(image, process.env.BACKEND_URL || "http://localhost:4000").toString() };
+    const baseUrl = process.env.BACKEND_URL;
+    if (!baseUrl) return product;
+    return { ...product, image: new URL(image, baseUrl).toString() };
   } catch {
     return product;
   }

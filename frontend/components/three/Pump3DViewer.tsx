@@ -340,6 +340,7 @@ export default function Pump3DViewer({ showLabels = true, autoRotateSpeed = 1.2 
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Required for SSR hydration check
     setIsClient(true);
     setWebglSupported(checkWebGLSupport());
     if (typeof window !== "undefined") {

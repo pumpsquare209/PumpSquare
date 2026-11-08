@@ -1,10 +1,13 @@
 import { NextResponse } from "next/server";
 
-const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:4000";
+const BACKEND_URL = process.env.BACKEND_URL;
 
 // Catalogue/datasheet PDFs are only served by the backend proxy, which checks
 // the owning product is still published.
 export async function GET(request: Request, context: RouteContext<"/api/files/[...key]">) {
+  if (!BACKEND_URL) {
+    return NextResponse.json({ ok: false, message: "Backend URL not configured" }, { status: 500 });
+  }
   const { key } = await context.params;
   const download = new URL(request.url).searchParams.get("download") === "1" ? "?download=1" : "";
 

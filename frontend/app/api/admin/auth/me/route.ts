@@ -1,9 +1,12 @@
 import { NextResponse } from "next/server";
 
-const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:4000";
+const BACKEND_URL = process.env.BACKEND_URL;
 
 export async function GET(request: Request) {
   try {
+    if (!BACKEND_URL) {
+      return NextResponse.json({ ok: false, user: null }, { status: 500 });
+    }
     const cookieHeader = request.headers.get("cookie");
     const response = await fetch(`${BACKEND_URL}/api/admin/auth/me`, {
       headers: {

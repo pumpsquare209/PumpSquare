@@ -1,9 +1,12 @@
 import { NextResponse } from "next/server";
 
-const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:4000";
+const BACKEND_URL = process.env.BACKEND_URL;
 
 export async function POST(request: Request) {
   try {
+    if (!BACKEND_URL) {
+      return NextResponse.json({ ok: false, message: "Backend URL not configured" }, { status: 500 });
+    }
     const cookieHeader = request.headers.get("cookie");
     const response = await fetch(`${BACKEND_URL}/api/admin/auth/logout`, {
       method: "POST",
