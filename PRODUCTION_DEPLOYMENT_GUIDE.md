@@ -1,8 +1,8 @@
 # PUMPSQUARE SYSTEMS LLP — PRODUCTION DEPLOYMENT GUIDE
 
-**Version:** 1.0  
+**Version:** 1.1  
 **Date:** 2026-11-09  
-**Status:** Production Ready
+**Status:** Production Ready (with fixes applied)
 
 ---
 
@@ -77,13 +77,14 @@
 | `NODE_ENV` | Yes | Set to `production` |
 | `SARVAM_API_KEY` | Yes | Sarvam AI API key for chatbot |
 | `SARVAM_MODEL` | No | Sarvam model name (default: `sarvam-105b`) |
-| `FRONTEND_ORIGIN` | Yes | Vercel frontend URL (e.g., `https://pumpsquare.vercel.app`) — **exact origin, no trailing slash** |
+| `FRONTEND_ORIGIN` | Yes | Primary Vercel frontend URL (e.g., `https://pumpsquare.vercel.app`) — **exact origin, no trailing slash** |
+| `FRONTEND_ORIGINS` | No | Additional frontend origins, comma-separated (e.g., `https://pumpsquare-git-main.vercel.app,https://pumpsquare-git-feature.vercel.app`) for preview deployments |
 | `CHAT_MAX_HISTORY` | No | Max chat history messages (default: 12) |
 | `CHAT_RATE_LIMIT` | No | Chat rate limit per window (default: 10) |
 | `SUPABASE_URL` | Yes | Supabase project URL |
 | `SUPABASE_ANON_KEY` | Yes | Supabase anon key |
 | `SUPABASE_SERVICE_ROLE_KEY` | Yes | Supabase service role key (server-only) |
-| `JWT_SECRET` | Yes | Strong random string for session signing (generate: `openssl rand -base64 32`) |
+| `JWT_SECRET` | Yes | Strong random string for session signing (generate: `openssl rand -base64 32`) — **must be at least 32 characters** |
 
 ---
 
@@ -143,8 +144,34 @@ Add all variables from **Section 5** in Render Dashboard → Environment.
 Configured in `backend/src/server.js`:
 
 ```javascript
+// Parse allowed origins from FRONTEND_ORIGINS (comma-separated) or fall back to FRONTEND_ORIGIN
+function getAllowedOrigins() {
+  const origins = new Set();
+  if (env.FRONTEND_ORIGINS) {
+    for (const o of env.FRONTEND_ORIGINS.split(",")) {
+      const trimmed = o.trim();
+      if (trimmed) origins.add(trimmed);
+    }
+  }
+  origins.add(env.FRONTEND_ORIGIN);
+  return Array.from(origins);
+}
+
+const allowedOrigins = getAllowedOrigins();
+
 app.use(cors({
-  origin: env.FRONTEND_ORIGIN,  // Exact Vercel origin
+  origin: (origin, callback) => {
+    // Allow requests with no origin (server-to-server, health checks, curl)
+    if (!origin) return callback(null, true);
+    // Normalize origin by removing trailing slash for comparison
+    const normalizedOrigin = origin.replace(/\/$/, "");
+    const isAllowed = allowedOrigins.some((allowed) => allowed.replace(/\/$/, "") === normalizedOrigin);
+    if (isAllowed) {
+      callback(null, true);
+    } else {
+      callback(new Error(`CORS: Origin ${origin} not allowed`));
+    }
+  },
   credentials: true,
   methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
@@ -153,8 +180,10 @@ app.use(cors({
 
 **Production Requirements:**
 - `FRONTEND_ORIGIN` must be the **exact** Vercel deployment URL (e.g., `https://pumpsquare.vercel.app`)
+- `FRONTEND_ORIGINS` (optional) can contain additional comma-separated origins for preview deployments
 - **No wildcard origins** with credentials (`origin: "*"` is forbidden)
 - Must match exactly including protocol (https) and no trailing slash
+- Trailing slashes are normalized for comparison
 
 ---
 
@@ -162,8 +191,7 @@ app.use(cors({
 
 ### Database
 - Project must have all migrations applied:
-  - Core schema: `frontend/lib/db/schema.sql`
-  - Technical tables: `backend/migration-technical-tables.sql`
+  - Core schema: `frontend/lib/db/schema.sql` (includes all technical tables: `product_review_tabs`, `product_review_features`, `product_performance_columns`, `product_performance_rows`, `product_performance_cells`, `product_materials`, `product_explanation_paragraphs`)
   - Dynamic tabs: `frontend/migration-dynamic-review-tabs.sql`
   - Category seed: run `npm run db:seed:categories` (or apply manually)
 
@@ -192,18 +220,15 @@ Run migrations in Supabase SQL Editor in this order:
 
 1. **Core schema** (`frontend/lib/db/schema.sql`)
    - Creates: `admin_users`, `admin_sessions`, `admin_login_attempts`, `product_categories`, `products`
+   - Creates technical tables: `product_review_tabs`, `product_review_features`, `product_performance_columns`, `product_performance_rows`, `product_performance_cells`, `product_materials`, `product_explanation_paragraphs`
    - Enables RLS with base policies
 
-2. **Technical tables** (`backend/migration-technical-tables.sql`)
-   - Creates: `product_review_tabs`, `product_review_features`, `product_performance_columns`, `product_performance_rows`, `product_performance_cells`, `product_materials`, `product_explanation_paragraphs`
-   - Enables RLS with public read policies for published products
-
-3. **Dynamic tabs migration** (`frontend/migration-dynamic-review-tabs.sql`)
+2. **Dynamic tabs migration** (`frontend/migration-dynamic-review-tabs.sql`)
    - Adds: `label`, `is_custom`, `sort_order` columns to `product_review_tabs`
    - Updates sort_order for standard tabs
    - Adds public read RLS policies
 
-4. **Seed categories** (run once)
+3. **Seed categories** (run once)
    ```bash
    cd frontend && npm run db:seed:categories
    ```
@@ -406,8 +431,12 @@ product-uploads/
 | `PRODUCTION_DEPLOYMENT_GUIDE.md` | This document |
 
 ### Code Changes (No Functional Changes)
-- Removed all `localhost` hardcoded defaults
-- Environment variables now required (no fallbacks to localhost)
+- Removed `localhost` fallback from `frontend/next.config.ts` (BACKEND_URL now required, no default)
+- Fixed `/api/admin/auth/me` route to use `headers()` from `next/headers` for proper dynamic rendering
+- Added `JWT_SECRET` to backend env validation (required, min 32 characters)
+- Removed unsafe `dev-secret-change-in-production` JWT_SECRET fallback
+- Updated CORS to support multiple origins via `FRONTEND_ORIGINS` (comma-separated) with trailing-slash normalization
+- Added `product_explanation_paragraphs` table to core schema (`frontend/lib/db/schema.sql`) with RLS and policies
 - API proxy routes validate `BACKEND_URL` exists
 - TypeScript/ESLint errors fixed
 - Production build passes

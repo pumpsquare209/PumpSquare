@@ -1,13 +1,15 @@
 import { NextResponse } from "next/server";
+import { headers } from "next/headers";
 
 const BACKEND_URL = process.env.BACKEND_URL;
 
-export async function GET(request: Request) {
+export async function GET() {
   try {
     if (!BACKEND_URL) {
       return NextResponse.json({ ok: false, user: null }, { status: 500 });
     }
-    const cookieHeader = request.headers.get("cookie");
+    const headersList = await headers();
+    const cookieHeader = headersList.get("cookie");
     const response = await fetch(`${BACKEND_URL}/api/admin/auth/me`, {
       headers: {
         ...(cookieHeader ? { cookie: cookieHeader } : {}),

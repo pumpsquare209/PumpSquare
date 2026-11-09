@@ -18,8 +18,35 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false,
 }));
 
+// Parse allowed origins from FRONTEND_ORIGINS (comma-separated) or fall back to FRONTEND_ORIGIN
+function getAllowedOrigins() {
+  const origins = new Set();
+  if (env.FRONTEND_ORIGINS) {
+    for (const o of env.FRONTEND_ORIGINS.split(",")) {
+      const trimmed = o.trim();
+      if (trimmed) origins.add(trimmed);
+    }
+  }
+  // Always include the primary FRONTEND_ORIGIN
+  origins.add(env.FRONTEND_ORIGIN);
+  return Array.from(origins);
+}
+
+const allowedOrigins = getAllowedOrigins();
+
 app.use(cors({
-  origin: env.FRONTEND_ORIGIN,
+  origin: (origin, callback) => {
+    // Allow requests with no origin (server-to-server, health checks, curl)
+    if (!origin) return callback(null, true);
+    // Normalize origin by removing trailing slash for comparison
+    const normalizedOrigin = origin.replace(/\/$/, "");
+    const isAllowed = allowedOrigins.some((allowed) => allowed.replace(/\/$/, "") === normalizedOrigin);
+    if (isAllowed) {
+      callback(null, true);
+    } else {
+      callback(new Error(`CORS: Origin ${origin} not allowed`));
+    }
+  },
   credentials: true,
   methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
@@ -46,7 +73,7 @@ function startServer() {
   const server = app.listen(port, () => {
     console.log(`🚀 Pumpsquare API running on port ${port}`);
     console.log(`📍 Environment: ${env.NODE_ENV}`);
-    console.log(`🌐 CORS enabled for: ${env.FRONTEND_ORIGIN}`);
+    console.log(`🌐 CORS enabled for: ${allowedOrigins.join(", ")}`);
     console.log(`🤖 Sarvam Model: ${env.SARVAM_MODEL}`);
   });
 

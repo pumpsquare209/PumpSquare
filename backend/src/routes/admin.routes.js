@@ -10,7 +10,7 @@ import { getSupabaseAdmin } from "../lib/supabase.js";
 import { hasCategoryColumns, hasDynamicReviewTabs, hasProductMigration, hasStoragePathColumns } from "../lib/product-schema.js";
 
 const router = express.Router();
-const JWT_SECRET = process.env.JWT_SECRET || "dev-secret-change-in-production";
+const JWT_SECRET = env.JWT_SECRET;
 const SESSION_COOKIE = "psq_admin_session";
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 

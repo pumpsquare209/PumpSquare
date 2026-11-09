@@ -216,12 +216,22 @@ create table if not exists product_materials (
 
 create index if not exists product_materials_product_idx on product_materials (product_id, sort_order);
 
+create table if not exists product_explanation_paragraphs (
+  id uuid primary key,
+  product_id uuid not null references products (id) on delete cascade,
+  html text not null default '',
+  sort_order int not null default 0
+);
+
+create index if not exists product_explanation_paragraphs_product_idx on product_explanation_paragraphs (product_id, sort_order);
+
 alter table product_review_tabs enable row level security;
 alter table product_review_features enable row level security;
 alter table product_performance_columns enable row level security;
 alter table product_performance_rows enable row level security;
 alter table product_performance_cells enable row level security;
 alter table product_materials enable row level security;
+alter table product_explanation_paragraphs enable row level security;
 
 -- Public visitors may read visible tabs of published products; the backend
 -- (service role) reads and writes everything. Hidden tabs stay private.
@@ -265,5 +275,10 @@ create policy "product_performance_cells_public_read" on product_performance_cel
 
 drop policy if exists "product_materials_public_read" on product_materials;
 create policy "product_materials_public_read" on product_materials for select using (
+  exists (select 1 from products p where p.id = product_id and p.status = 'published' and p.deleted_at is null)
+);
+
+drop policy if exists "product_explanation_paragraphs_public_read" on product_explanation_paragraphs;
+create policy "product_explanation_paragraphs_public_read" on product_explanation_paragraphs for select using (
   exists (select 1 from products p where p.id = product_id and p.status = 'published' and p.deleted_at is null)
 );

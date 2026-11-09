@@ -6,11 +6,13 @@ const envSchema = z.object({
   SARVAM_API_KEY: z.string().min(10, "SARVAM_API_KEY appears invalid"),
   SARVAM_MODEL: z.string().default("sarvam-105b"),
   FRONTEND_ORIGIN: z.string().url(),
+  FRONTEND_ORIGINS: z.string().optional(),
   CHAT_MAX_HISTORY: z.coerce.number().int().positive().default(12),
   CHAT_RATE_LIMIT: z.coerce.number().int().positive().default(10),
   SUPABASE_URL: z.string().url(),
   SUPABASE_ANON_KEY: z.string().min(10),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(10),
+  JWT_SECRET: z.string().min(32, "JWT_SECRET must be at least 32 characters"),
 });
 
 const parsed = envSchema.safeParse(process.env);

@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const backendUrl = process.env.BACKEND_URL || "http://localhost:4000";
+const backendUrl = process.env.BACKEND_URL;
 
 function getHostname(url: string | undefined): string | undefined {
   if (!url) return undefined;
@@ -22,7 +22,6 @@ const remotePatterns = [
   ...(supabaseHostname ? [{ protocol: "https" as const, hostname: supabaseHostname }] : []),
   ...(backendHostname
     ? [
-        { protocol: "http" as const, hostname: backendHostname },
         { protocol: "https" as const, hostname: backendHostname },
       ]
     : []),
