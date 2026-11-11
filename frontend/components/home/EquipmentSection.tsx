@@ -58,7 +58,7 @@ export default function EquipmentSection() {
           </Reveal>
         </div>
 
-        <div className="mt-8 lg:mt-10 relative z-10">
+        <div className="mt-12 lg:mt-14 relative z-10">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 lg:gap-6">
             {features.map((feature, index) => {
               const Icon = feature.icon;
