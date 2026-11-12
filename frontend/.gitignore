@@ -39,3 +39,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# model pipeline scratch (comparison renders, probes, build reports, cloned work repo)
+/scripts/model-pipeline/work/
+/scripts/model-pipeline/node_modules/

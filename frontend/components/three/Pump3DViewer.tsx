@@ -3,9 +3,8 @@
 import { RotateCcw } from "lucide-react";
 import * as THREE from "three";
 import { OptimizedCanvas } from "./OptimizedCanvas";
+import { EQUIPMENT_MODELS } from "@/lib/modelAssets";
 
-const DESKTOP_MODEL_PATH = "/models/homelastsection.glb";
-const MOBILE_MODEL_PATH = "/models/homelastsection-mobile-test.glb";
 const FALLBACK_IMAGE = "/images/Industrial_Blue_Pump_Assembly-removebg-preview.png";
 
 const DEFAULT_CAMERA_POSITION = new THREE.Vector3(0, 0.1, 3.5);
@@ -19,8 +18,8 @@ interface Pump3DViewerProps {
 export default function Pump3DViewer({ showLabels = true, autoRotateSpeed = 1.2 }: Pump3DViewerProps) {
   return (
     <OptimizedCanvas
-      desktopModelPath={DESKTOP_MODEL_PATH}
-      mobileModelPath={MOBILE_MODEL_PATH}
+      desktopModelPath={EQUIPMENT_MODELS.desktop}
+      mobileModelPath={EQUIPMENT_MODELS.mobile}
       defaultCameraPosition={DEFAULT_CAMERA_POSITION}
       defaultModelScale={DEFAULT_MODEL_SCALE}
       fallbackImage={FALLBACK_IMAGE}

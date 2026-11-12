@@ -4,11 +4,20 @@ import { OrbitControls, Environment } from "@react-three/drei";
 import * as THREE from "three";
 import type { OrbitControls as OrbitControlsType } from "three-stdlib";
 import { PumpModel, PumpModelProps } from "./PumpModel";
-import { useDeviceCapability } from "./useDeviceCapability";
+import { useDeviceCapability, type DeviceTier } from "./useDeviceCapability";
+import { useVisibilityGate } from "./useVisibilityGate";
+import { CanvasErrorBoundary } from "./CanvasErrorBoundary";
+import { RenderStateController, isRenderPaused } from "./RenderStateController";
 
 type EnvironmentPreset = "studio" | "apartment" | "city" | "dawn" | "forest" | "lobby" | "night" | "park" | "sunset" | "warehouse";
 
-interface OptimizedCanvasProps extends Omit<PumpModelProps, "onLoad" | "onError"> {
+// Bundled copies of drei's presets; keeps the HDR on our own origin and cacheable.
+const LOCAL_ENVIRONMENT_ASSETS: Partial<Record<EnvironmentPreset, string[]>> = {
+  studio: ["/hdri/studio_small_03_1k.hdr"],
+};
+const ENVIRONMENT_FALLBACK_FILES = ["/hdri/fallback/studio_small_03_fallback.hdr"];
+
+interface OptimizedCanvasProps extends Omit<PumpModelProps, "onLoad" | "onError" | "tier"> {
   showLabels?: boolean;
   autoRotateSpeed?: number;
   fallbackImage: string;
@@ -19,6 +28,24 @@ interface OptimizedCanvasProps extends Omit<PumpModelProps, "onLoad" | "onError"
   shadowMapSize?: number;
   className?: string;
   style?: React.CSSProperties;
+}
+
+const RENDER_MARGIN = "400px";
+const MOUNT_MARGIN = "400px 0px";
+const USER_INTERACTION_RESUME_MS = 1500;
+
+const rotateAxis = new THREE.Vector3(0, 1, 0);
+const lookDirection = new THREE.Vector3();
+
+function getShadowMapSize(tier: DeviceTier, requested: number): number {
+  switch (tier) {
+    case "mobile":
+      return 512;
+    case "tablet":
+      return 1024;
+    default:
+      return Math.min(requested, 1024);
+  }
 }
 
 function AutoRotateController({
@@ -33,15 +60,36 @@ function AutoRotateController({
   const { camera } = useThree();
 
   useFrame((_, delta) => {
-    if (!enabled || userInteractingRef.current) return;
+    if (!enabled || userInteractingRef.current || isRenderPaused()) return;
 
-    const target = new THREE.Vector3();
-    camera.getWorldDirection(target);
-    camera.position.applyAxisAngle(new THREE.Vector3(0, 1, 0), rotationSpeed * delta);
-    camera.lookAt(target);
+    camera.getWorldDirection(lookDirection);
+    camera.position.applyAxisAngle(rotateAxis, rotationSpeed * delta);
+    camera.lookAt(lookDirection);
   });
 
   return null;
+}
+
+function ViewerEnvironment({ preset }: { preset: EnvironmentPreset }) {
+  // Trying the bundled asset first and falling back to a second local copy keeps the
+  // viewer lit even if the primary HDR is unavailable; without either, the existing
+  // light rig still renders the model.
+  const [attempt, setAttempt] = useState(0);
+  const files = LOCAL_ENVIRONMENT_ASSETS[preset] ? (attempt === 0 ? LOCAL_ENVIRONMENT_ASSETS[preset] : ENVIRONMENT_FALLBACK_FILES) : undefined;
+
+  return (
+    <CanvasErrorBoundary
+      onError={
+        files === ENVIRONMENT_FALLBACK_FILES ? undefined : () => setAttempt((value) => value + 1)
+      }
+    >
+      {files ? (
+        <Environment files={files} background={false} backgroundBlurriness={0} />
+      ) : (
+        <Environment preset={preset} background={false} ground={false} />
+      )}
+    </CanvasErrorBoundary>
+  );
 }
 
 function LoadingFallback() {
@@ -80,7 +128,7 @@ function LoadingFallback() {
   );
 }
 
-function ErrorFallback({ fallbackImage }: { fallbackImage: string }) {
+function ErrorFallback({ fallbackImage, onRetry }: { fallbackImage: string; onRetry: () => void }) {
   return (
     <div
       style={{
@@ -105,57 +153,79 @@ function ErrorFallback({ fallbackImage }: { fallbackImage: string }) {
           objectFit: "contain",
         }}
       />
+      <button
+        type="button"
+        onClick={onRetry}
+        className="absolute bottom-4 right-4 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-white shadow-md transition-colors hover:bg-primary-dark"
+      >
+        Retry 3D view
+      </button>
     </div>
   );
 }
 
 function CanvasContent({
-  dpr,
   shadows,
   shadowMapSize,
-  cameraPosition,
-  fov,
   environmentPreset,
+  active,
   modelLoaded,
-  modelError,
+  paused,
   prefersReducedMotion,
   userInteractingRef,
   controlsRef,
   autoRotateSpeed,
   pumpModelProps,
   onModelLoad,
-  onModelError,
-  fallbackImage,
+  onControlsStart,
+  onControlsEnd,
+  onContextLost,
 }: {
-  dpr: number;
   shadows: boolean;
   shadowMapSize: number;
-  cameraPosition: [number, number, number];
-  fov: number;
   environmentPreset: EnvironmentPreset;
+  active: boolean;
   modelLoaded: boolean;
-  modelError: Error | null;
+  paused: boolean;
   prefersReducedMotion: boolean;
   userInteractingRef: React.MutableRefObject<boolean>;
   controlsRef: React.RefObject<OrbitControlsType | null>;
   autoRotateSpeed: number;
   pumpModelProps: Omit<PumpModelProps, "onLoad" | "onError">;
   onModelLoad: () => void;
-  onModelError: (error: Error) => void;
-  fallbackImage: string;
+  onControlsStart: () => void;
+  onControlsEnd: () => void;
+  onContextLost: () => void;
 }) {
-  const [shouldRender, setShouldRender] = useState(true);
+  const gl = useThree((state) => state.gl);
 
-  useFrame((_, delta) => {
-    if (!shouldRender) return;
-  });
+  useEffect(() => {
+    const canvas = gl.domElement;
+    const handleContextLost = (event: Event) => {
+      event.preventDefault();
+      onContextLost();
+    };
+    canvas.addEventListener("webglcontextlost", handleContextLost);
+    return () => canvas.removeEventListener("webglcontextlost", handleContextLost);
+  }, [gl, onContextLost]);
+
+  // OrbitControls sets touch-action:none on the canvas; a touch-action that forbids
+  // panning also stops wheel scrolling in Chrome. Vertical gestures stay with the
+  // page and horizontal ones rotate the model.
+  useEffect(() => {
+    const canvas = gl.domElement;
+    const previous = canvas.style.touchAction;
+    canvas.style.touchAction = "pan-y";
+    return () => {
+      canvas.style.touchAction = previous;
+    };
+  }, [gl]);
 
   return (
     <>
+      <RenderStateController active={active} />
       <color attach="background" args={["#fafafa"]} />
-      {environmentPreset && (
-        <Environment preset={environmentPreset} background={false} ground={false} />
-      )}
+      {environmentPreset && <ViewerEnvironment preset={environmentPreset} />}
       <ambientLight intensity={0.6} color="#ffffff" />
       {shadows && (
         <>
@@ -180,12 +250,13 @@ function CanvasContent({
       <directionalLight position={[0, -1.5, 0]} intensity={0.5} color="#ffffff" />
       <hemisphereLight groundColor="#e8eef5" color="#ffffff" intensity={0.5} />
 
-      {modelLoaded && !modelError && (
+      {modelLoaded && (
         <>
           <OrbitControls
             ref={controlsRef}
             enablePan={false}
-            enableZoom={true}
+            // Wheel zoom calls preventDefault() and traps page scroll over the canvas.
+            enableZoom={false}
             minZoom={0.3}
             maxZoom={5}
             enableDamping={true}
@@ -196,21 +267,17 @@ function CanvasContent({
             maxAzimuthAngle={Infinity}
             minPolarAngle={0.01}
             maxPolarAngle={Math.PI - 0.01}
-            onStart={() => {
-              userInteractingRef.current = true;
-            }}
-            onEnd={() => {
-              userInteractingRef.current = false;
-            }}
+            onStart={onControlsStart}
+            onEnd={onControlsEnd}
           />
           <AutoRotateController
-            enabled={modelLoaded && !prefersReducedMotion}
+            enabled={modelLoaded && !prefersReducedMotion && !paused}
             rotationSpeed={autoRotateSpeed}
             userInteractingRef={userInteractingRef}
           />
         </>
       )}
-      <PumpModel {...pumpModelProps} onLoad={onModelLoad} onError={onModelError} />
+      <PumpModel {...pumpModelProps} onLoad={onModelLoad} />
     </>
   );
 }
@@ -231,59 +298,53 @@ export function OptimizedCanvas({
   const { isClient, tier, dpr, prefersReducedMotion, webglSupported } = useDeviceCapability();
   const [modelLoaded, setModelLoaded] = useState(false);
   const [modelError, setModelError] = useState<Error | null>(null);
-  const [isInViewport, setIsInViewport] = useState(false);
+  const [contextLost, setContextLost] = useState(false);
+  const [canvasKey, setCanvasKey] = useState(0);
+  const [settling, setSettling] = useState(false);
+  const releaseTimerRef = useRef<number | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const controlsRef = useRef<OrbitControlsType | null>(null);
   const userInteractingRef = useRef(false);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const { isMounted, isInViewport, isTabVisible } = useVisibilityGate(containerRef, {
+    rootMargin: RENDER_MARGIN,
+    mountMargin: MOUNT_MARGIN,
+  });
+
+  // Off-screen or hidden tabs render no frames at all; interaction pauses rotation only.
+  const isActive = isInViewport && isTabVisible;
+
+  // After a drag ends, keep damping alive briefly before auto-rotation resumes.
+  const handleControlsStart = () => {
+    if (releaseTimerRef.current !== null) window.clearTimeout(releaseTimerRef.current);
+    releaseTimerRef.current = null;
+    userInteractingRef.current = true;
+    setSettling(true);
+  };
+
+  const handleControlsEnd = () => {
+    if (releaseTimerRef.current !== null) window.clearTimeout(releaseTimerRef.current);
+    releaseTimerRef.current = window.setTimeout(() => {
+      releaseTimerRef.current = null;
+      userInteractingRef.current = false;
+      setSettling(false);
+    }, USER_INTERACTION_RESUME_MS);
+  };
+
+  const handleContextLost = useCallback(() => setContextLost(true), []);
 
   useEffect(() => {
-    if (!isClient || typeof IntersectionObserver === "undefined") {
-      setIsInViewport(true);
-      return;
-    }
-
-    const container = containerRef.current;
-    if (!container) return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          setIsInViewport(entry.isIntersecting);
-        });
-      },
-      { rootMargin: "200px", threshold: 0 }
-    );
-
-    observer.observe(container);
-    return () => observer.disconnect();
-  }, [isClient]);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const gl = canvas.getContext("webgl2") || canvas.getContext("webgl");
-    if (!gl) return;
-
-    const handleContextLost = (e: Event) => {
-      e.preventDefault();
-      setModelError(new Error("WebGL context lost"));
-    };
-
-    const handleContextRestored = () => {
-      setModelError(null);
-      setModelLoaded(false);
-    };
-
-    canvas.addEventListener("webglcontextlost", handleContextLost);
-    canvas.addEventListener("webglcontextrestored", handleContextRestored);
-
     return () => {
-      canvas.removeEventListener("webglcontextlost", handleContextLost);
-      canvas.removeEventListener("webglcontextrestored", handleContextRestored);
+      if (releaseTimerRef.current !== null) window.clearTimeout(releaseTimerRef.current);
     };
   }, []);
+
+  const recreateViewer = () => {
+    setContextLost(false);
+    setModelError(null);
+    setModelLoaded(false);
+    // Unmounting R3F releases the lost context; remounting builds a fresh one.
+    setCanvasKey((value) => value + 1);
+  };
 
   if (!isClient) {
     return (
@@ -321,7 +382,7 @@ export function OptimizedCanvas({
   }
 
   const mobileShadows = tier === "mobile" ? false : shadows;
-  const mobileShadowMapSize = tier === "mobile" ? 1024 : tier === "tablet" ? 1536 : shadowMapSize;
+  const mobileShadowMapSize = getShadowMapSize(tier, shadowMapSize);
   const mobileDpr = dpr;
 
   const cameraPosition = [
@@ -336,39 +397,50 @@ export function OptimizedCanvas({
       className={`relative isolate aspect-[4/3] ${shadows ? "rounded-xl border border-line bg-white shadow-xl shadow-primary/10" : "overflow-hidden"} ${className}`}
       style={{ ...style, maxWidth: "100%" }}
     >
-      {!modelLoaded && !modelError && <LoadingFallback />}
-      {modelError && <ErrorFallback fallbackImage={fallbackImage} />}
-      <Canvas
-        ref={canvasRef}
-        camera={{ position: cameraPosition, fov: 35 }}
-        gl={{
-          antialias: tier !== "mobile",
-          alpha: true,
-          preserveDrawingBuffer: false,
-        }}
-        shadows={mobileShadows}
-        dpr={mobileDpr}
-        performance={{ min: 0.5 }}
-      >
-        <CanvasContent
-          dpr={mobileDpr}
+      {!modelError && (contextLost || !modelLoaded) && <LoadingFallback />}
+      {modelError && <ErrorFallback fallbackImage={fallbackImage} onRetry={recreateViewer} />}
+      {contextLost && !modelError && (
+        <button
+          type="button"
+          onClick={recreateViewer}
+          className="absolute bottom-4 right-4 z-30 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-white shadow-md transition-colors hover:bg-primary-dark"
+        >
+          Restore 3D view
+        </button>
+      )}
+      {isMounted && !modelError && (
+        <Canvas
+          key={canvasKey}
+          camera={{ position: cameraPosition, fov: 35 }}
+          gl={{
+            antialias: false,
+            alpha: true,
+            preserveDrawingBuffer: false,
+            powerPreference: "high-performance",
+          }}
           shadows={mobileShadows}
-          shadowMapSize={mobileShadowMapSize}
-          cameraPosition={cameraPosition}
-          fov={35}
-          environmentPreset={environmentPreset}
-          modelLoaded={modelLoaded && isInViewport}
-          modelError={modelError}
-          prefersReducedMotion={prefersReducedMotion}
-          userInteractingRef={userInteractingRef}
-          controlsRef={controlsRef}
-          autoRotateSpeed={autoRotateSpeed}
-          pumpModelProps={pumpModelProps as Omit<PumpModelProps, "onLoad" | "onError">}
-          onModelLoad={() => setModelLoaded(true)}
-          onModelError={setModelError}
-          fallbackImage={fallbackImage}
-        />
-      </Canvas>
+          dpr={mobileDpr}
+          performance={{ min: 0.5 }}
+        >
+          <CanvasContent
+            shadows={mobileShadows}
+            shadowMapSize={mobileShadowMapSize}
+            environmentPreset={environmentPreset}
+            active={isActive}
+            modelLoaded={modelLoaded}
+            paused={settling}
+            prefersReducedMotion={prefersReducedMotion}
+            userInteractingRef={userInteractingRef}
+            controlsRef={controlsRef}
+            autoRotateSpeed={autoRotateSpeed}
+            pumpModelProps={{ ...pumpModelProps, tier } as Omit<PumpModelProps, "onLoad" | "onError">}
+            onModelLoad={() => setModelLoaded(true)}
+            onControlsStart={handleControlsStart}
+            onControlsEnd={handleControlsEnd}
+            onContextLost={handleContextLost}
+          />
+        </Canvas>
+      )}
       {showLabels && (
         <>
           {labelTop && (

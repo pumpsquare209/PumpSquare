@@ -1,9 +1,9 @@
 "use client";
 
-import { useRef, useEffect, Suspense } from "react";
+import { useRef, useEffect, useState, Suspense } from "react";
 import { useGLTF } from "@react-three/drei";
 import * as THREE from "three";
-import { useModelPath } from "./useDeviceCapability";
+import { getModelPath, type DeviceTier } from "./useDeviceCapability";
 
 const INDUSTRIAL_BLUE = 0x0876d1;
 const DARK_BLUE = 0x07549a;
@@ -56,21 +56,18 @@ export interface PumpModelProps {
   tabletModelPath?: string;
   defaultCameraPosition: THREE.Vector3;
   defaultModelScale: number;
+  /** Device tier is owned by the parent canvas so the model URL is correct on the first render. */
+  tier: DeviceTier;
   onLoad?: () => void;
   onError?: (error: Error) => void;
 }
 
-function PumpModelInner({
-  desktopModelPath,
-  mobileModelPath,
-  tabletModelPath,
-  defaultCameraPosition,
-  defaultModelScale,
-  onLoad,
-  onError,
-}: PumpModelProps) {
+function PumpModelInner({ modelPath, defaultModelScale, onLoad }: {
+  modelPath: string;
+  defaultModelScale: number;
+  onLoad?: () => void;
+}) {
   const groupRef = useRef<THREE.Group>(null);
-  const modelPath = useModelPath(desktopModelPath, mobileModelPath, tabletModelPath);
   const { scene } = useGLTF(modelPath);
   const materialsRef = useRef<ReturnType<typeof createPumpMaterials> | null>(null);
 
@@ -149,8 +146,12 @@ function PumpModelInner({
     currentGroup.add(scene);
     onLoad?.();
 
+    const materials = mats;
+
     return () => {
       currentGroup.remove(scene);
+      // The scene object is owned by useGLTF's shared cache and may be remounted in
+      // another canvas, so only release GPU-side resources, never the geometry itself.
       scene.traverse((obj) => {
         if (obj instanceof THREE.Mesh) {
           obj.geometry?.dispose();
@@ -161,36 +162,28 @@ function PumpModelInner({
           }
         }
       });
-      if (materialsRef.current) {
-        Object.values(materialsRef.current).forEach((m) => m.dispose());
-        materialsRef.current = null;
-      }
+      Object.values(materials).forEach((m) => m.dispose());
+      if (materialsRef.current === materials) materialsRef.current = null;
     };
   }, [scene, onLoad, defaultModelScale]);
 
-  return <group ref={groupRef} />;
+  return <group ref={groupRef} dispose={null} />;
 }
 
 export function PumpModel({
   desktopModelPath,
   mobileModelPath,
-  tabletModelPath,
-  defaultCameraPosition,
   defaultModelScale,
+  tier,
   onLoad,
-  onError,
 }: PumpModelProps) {
+  const [resolvedPath] = useState(() =>
+    getModelPath(tier, desktopModelPath, mobileModelPath)
+  );
+
   return (
     <Suspense fallback={null}>
-      <PumpModelInner
-        desktopModelPath={desktopModelPath}
-        mobileModelPath={mobileModelPath}
-        tabletModelPath={tabletModelPath}
-        defaultCameraPosition={defaultCameraPosition}
-        defaultModelScale={defaultModelScale}
-        onLoad={onLoad}
-        onError={onError}
-      />
+      <PumpModelInner modelPath={resolvedPath} defaultModelScale={defaultModelScale} onLoad={onLoad} />
     </Suspense>
   );
 }

@@ -27,11 +27,12 @@ function getTierFromWidth(width: number): DeviceTier {
 function getDPR(tier: DeviceTier, rawDPR: number): number {
   switch (tier) {
     case "mobile":
-      return Math.min(rawDPR, 1.25);
+      // Phones rarely resolve more than this; keeps the drawing buffer small.
+      return Math.max(1, Math.min(rawDPR, 1.25));
     case "tablet":
-      return Math.min(rawDPR, 1.5);
+      return Math.min(rawDPR, 1.25);
     case "desktop":
-      return Math.min(rawDPR, 2);
+      return Math.min(rawDPR, 1.5);
   }
 }
 
@@ -59,11 +60,12 @@ export function useDeviceCapability(): DeviceCapability {
 
     let webglSupported = false;
     try {
-      const canvas = document.createElement("canvas");
-      webglSupported = !!(
-        window.WebGLRenderingContext &&
-        (canvas.getContext("webgl") || canvas.getContext("experimental-webgl"))
-      );
+      const probe = window.WebGLRenderingContext
+        ? (document.createElement("canvas").getContext("webgl") as WebGLRenderingContext | null)
+        : null;
+      webglSupported = !!probe;
+      // Release the probe context immediately; browsers cap simultaneous WebGL contexts.
+      probe?.getExtension("WEBGL_lose_context")?.loseContext();
     } catch {
       webglSupported = false;
     }
@@ -100,22 +102,14 @@ export function useDeviceCapability(): DeviceCapability {
   return capability;
 }
 
-export function useModelPath(
+/**
+ * Only two resolutions exist, but tier is resolved once per canvas mount so a
+ * window resize cannot make the loaded model URL change (and re-request).
+ */
+export function getModelPath(
+  tier: DeviceTier,
   desktopPath: string,
-  mobilePath: string,
-  tabletPath?: string
+  mobilePath: string
 ): string {
-  const { tier, isClient } = useDeviceCapability();
-
-  if (!isClient) return desktopPath;
-
-  switch (tier) {
-    case "mobile":
-      return mobilePath;
-    case "tablet":
-      return tabletPath ?? mobilePath;
-    case "desktop":
-    default:
-      return desktopPath;
-  }
+  return tier === "desktop" ? desktopPath : mobilePath;
 }
