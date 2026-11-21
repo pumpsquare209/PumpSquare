@@ -192,6 +192,8 @@ async function ProductDetail({ slug }: { slug: string }) {
   const datasheetHref = fileProxyUrl(product.datasheetUrl, true);
   const hasTechnicalTabs = (product.technical?.tabs ?? []).some((tab) => tab.enabled && tab.features.length > 0);
   const quoteHref = `/contact?product=${encodeURIComponent(product.slug)}`;
+  const modelUrl = product.modelUrl ? fileProxyUrl(product.modelUrl) : null;
+  const modelName = product.modelName;
 
   return (
     <div className="min-h-screen bg-surface">
@@ -226,7 +228,7 @@ async function ProductDetail({ slug }: { slug: string }) {
                 <li aria-hidden="true">/</li>
                 <li>
                   <Link
-                    href={`/products?category=${product.category.slug}`}
+                    href={`/products/type/${product.category.slug}`}
                     className="transition-colors hover:text-primary"
                   >
                     {product.category.name}
@@ -244,7 +246,12 @@ async function ProductDetail({ slug }: { slug: string }) {
         <div className="mx-auto max-w-[1200px] px-4 sm:px-6 lg:px-8">
           <div className="grid items-start gap-10 lg:grid-cols-[1fr_1fr] lg:gap-16">
             <div>
-              <ProductGallery name={product.name} images={gallery} />
+              <ProductGallery
+                name={product.name}
+                images={gallery}
+                modelUrl={modelUrl}
+                modelName={modelName}
+              />
 
               {datasheetHref ? (
                 <div className="mt-6 flex flex-wrap gap-3">

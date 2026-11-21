@@ -10,6 +10,7 @@ import type {
   PublicCategory,
 } from "@/lib/products";
 import { withAbsoluteImages } from "@/lib/public-assets";
+import { normalizeAdminCategory, normalizePublicCategory } from "@/lib/category-content";
 
 const BACKEND_URL = process.env.BACKEND_URL;
 
@@ -51,13 +52,21 @@ export const getPublishedProduct = cache(async function getPublishedProduct(slug
   }
 });
 
-export const getPublishedProducts = cache(async function getPublishedProducts(): Promise<ProductSummary[]> {
+export const getPublishedProductsResult = cache(async function getPublishedProductsResult(): Promise<{
+  products: ProductSummary[];
+  error: string | null;
+}> {
   try {
     const data = (await fetchBackend("/products")) as { products?: ProductSummary[] };
-    return (data.products ?? []).map(withAbsoluteImages);
-  } catch {
-    return [];
+    return { products: (data.products ?? []).map(withAbsoluteImages), error: null };
+  } catch (caught) {
+    const message = caught instanceof Error ? caught.message : "Could not load products.";
+    return { products: [], error: message };
   }
+});
+
+export const getPublishedProducts = cache(async function getPublishedProducts(): Promise<ProductSummary[]> {
+  return (await getPublishedProductsResult()).products;
 });
 
 export const getPublishedSlugs = cache(async function getPublishedSlugs(): Promise<string[]> {
@@ -69,13 +78,21 @@ export const getPublishedSlugs = cache(async function getPublishedSlugs(): Promi
   }
 });
 
-export const getCategories = cache(async function getCategories(): Promise<PublicCategory[]> {
+export const getCategoriesResult = cache(async function getCategoriesResult(): Promise<{
+  categories: PublicCategory[];
+  error: string | null;
+}> {
   try {
     const data = (await fetchBackend("/categories")) as { categories?: PublicCategory[] };
-    return data.categories ?? [];
-  } catch {
-    return [];
+    return { categories: (data.categories ?? []).map(normalizePublicCategory), error: null };
+  } catch (caught) {
+    const message = caught instanceof Error ? caught.message : "Could not load categories.";
+    return { categories: [], error: message };
   }
+});
+
+export const getCategories = cache(async function getCategories(): Promise<PublicCategory[]> {
+  return (await getCategoriesResult()).categories;
 });
 
 export async function listAdminProducts(): Promise<AdminProductSummary[]> {
@@ -94,7 +111,7 @@ export async function getAdminProductById(id: string): Promise<AdminProduct | nu
 
 export async function getAdminCategories(): Promise<AdminCategory[]> {
   const data = (await fetchBackend("/admin/categories")) as { categories?: AdminCategory[] };
-  return data.categories ?? [];
+  return (data.categories ?? []).map(normalizeAdminCategory);
 }
 
 export async function getAdminCategoriesSafe(): Promise<{ categories: AdminCategory[]; error: string | null }> {

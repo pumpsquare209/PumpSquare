@@ -81,8 +81,7 @@ export function useDeviceCapability(): DeviceCapability {
   }, []);
 
   useEffect(() => {
-    setCapability((prev) => ({ ...prev, isClient: true }));
-    updateCapability();
+    setTimeout(updateCapability, 0);
 
     const handleResize = () => updateCapability();
     window.addEventListener("resize", handleResize, { passive: true });

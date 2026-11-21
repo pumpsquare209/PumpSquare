@@ -239,7 +239,7 @@ export function OptimizedCanvas({
 
   useEffect(() => {
     if (!isClient || typeof IntersectionObserver === "undefined") {
-      setIsInViewport(true);
+      setTimeout(() => setIsInViewport(true), 0);
       return;
     }
 

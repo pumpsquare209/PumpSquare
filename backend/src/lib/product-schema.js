@@ -5,7 +5,7 @@ const MIGRATED_COLUMNS = ["deleted_at", "display_order", "gallery_images"];
 // Storage-path columns arrive with the same migration but are detected
 // separately: a database without the default columns can still have them, and
 // they must keep saving regardless of which other columns exist.
-const STORAGE_COLUMNS = ["image_storage_path", "gallery_storage_paths", "catalogue_storage_path", "datasheet_storage_path"];
+const STORAGE_COLUMNS = ["image_storage_path", "gallery_storage_paths", "catalogue_storage_path", "datasheet_storage_path", "model_storage_path"];
 
 const columnCache = new Map();
 
@@ -16,18 +16,19 @@ const columnCache = new Map();
  */
 function hasColumns(key, columns) {
   if (!columnCache.has(key)) {
-    columnCache.set(
-      key,
-      (async () => {
-        const present = {};
-        for (const column of columns) {
-          const { error } = await getSupabaseAdmin().from("products").select(column).limit(1);
-          if (error && error.code !== "42703") throw error;
-          present[column] = !error;
-        }
-        return present;
-      })(),
-    );
+    const pending = (async () => {
+      const present = {};
+      for (const column of columns) {
+        const { error } = await getSupabaseAdmin().from("products").select(column).limit(1);
+        if (error && error.code !== "42703") throw error;
+        present[column] = !error;
+      }
+      return present;
+    })();
+    columnCache.set(key, pending);
+    pending.catch(() => {
+      columnCache.delete(key);
+    });
   }
   return columnCache.get(key);
 }
@@ -44,6 +45,7 @@ export async function hasStoragePathColumns() {
     gallery: present.gallery_storage_paths,
     catalogue: present.catalogue_storage_path,
     datasheet: present.datasheet_storage_path,
+    model: present.model_storage_path,
   };
 }
 
@@ -64,18 +66,43 @@ export async function hasDynamicReviewTabs() {
   return reviewTabState;
 }
 
-let categoryState = null;
+const CATEGORY_COLUMNS = [
+  "parent_id",
+  "is_active",
+  "description",
+  "level",
+  "main_category_id",
+  "content",
+  "how_it_works",
+  "applications",
+  "usage_info",
+  "industries",
+  "additional_info",
+  "category_image_url",
+  "category_image_storage_path",
+];
 
-/**
- * Category hierarchy/activation columns arrive with the same migration. Until
- * then they are reported as defaults so the admin UI keeps working.
- */
-export async function hasCategoryColumns() {
-  if (categoryState === null) {
-    const { error } = await getSupabaseAdmin().from("product_categories").select("parent_id, is_active, description").limit(1);
-    if (!error) categoryState = true;
-    else if (error.code === "42703") categoryState = false;
-    else throw error;
+let categoryColumnsState = null;
+
+export async function getCategoryColumns() {
+  if (categoryColumnsState === null) {
+    categoryColumnsState = (async () => {
+      const present = {};
+      for (const column of CATEGORY_COLUMNS) {
+        const { error } = await getSupabaseAdmin().from("product_categories").select(column).limit(1);
+        if (error && !["42703", "PGRST204"].includes(error.code)) throw error;
+        present[column] = !error;
+      }
+      return present;
+    })();
+    categoryColumnsState.catch(() => {
+      categoryColumnsState = null;
+    });
   }
-  return categoryState;
+  return categoryColumnsState;
+}
+
+export async function hasCategoryColumns() {
+  const columns = await getCategoryColumns();
+  return Boolean(columns.parent_id && columns.is_active && columns.description);
 }

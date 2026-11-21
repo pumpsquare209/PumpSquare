@@ -8,6 +8,7 @@ import { createClient } from "@supabase/supabase-js";
 import { env } from "../config/env.js";
 import { getSupabaseAdmin } from "../lib/supabase.js";
 import { hasCategoryColumns, hasDynamicReviewTabs, hasProductMigration, hasStoragePathColumns } from "../lib/product-schema.js";
+import { textValue } from "../lib/text.js";
 
 const router = express.Router();
 const JWT_SECRET = env.JWT_SECRET;
@@ -19,6 +20,13 @@ const PERMISSIONS_REF = {
   product_manager: ["products:write", "categories:write", "files:upload"],
   read_only: [],
 };
+
+const APPROVED_MAIN_CATEGORY_SLUGS = ["pumps-manufactured-by-us", "pumps-traded-by-us"];
+const CATEGORY_IMAGE_KEY_PATTERN = /^categories\/[0-9a-f-]{36}\/category-image-[0-9a-f-]{36}\.(png|jpg|webp)$/;
+
+function isCategoryImageKey(value) {
+  return typeof value === "string" && value.length <= 300 && CATEGORY_IMAGE_KEY_PATTERN.test(value);
+}
 
 function hashToken(token) {
   return createHash("sha256").update(token).digest("hex");
@@ -539,6 +547,9 @@ function toAdminProduct(row, technical) {
     galleryStoragePaths: row.gallery_storage_paths ?? [],
     catalogueStoragePath: row.catalogue_storage_path ?? null,
     datasheetStoragePath: row.datasheet_storage_path ?? null,
+    modelUrl: row.model_url ?? null,
+    modelName: row.model_name ?? null,
+    modelStoragePath: row.model_storage_path ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -765,7 +776,7 @@ function toTechnicalTabs(tabRows) {
 
 const slugSchema = z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).min(2).max(80);
 const storageUrlSchema = z.string().max(500);
-const storagePathSchema = z.string().max(300).regex(/^products\/[0-9a-f-]{36}\/(images|documents)\/[a-z0-9-]+(?:\.[a-z0-9]+)?$/);
+const storagePathSchema = z.string().max(300).regex(/^products\/[0-9a-f-]{36}\/(images|documents|models)\/[a-z0-9-]+(?:\.[a-z0-9]+)?$/);
 
 
 const specEntrySchema = z.object({
@@ -783,6 +794,8 @@ const productInputSchema = z.object({
   name: z.string().trim().min(2).max(120),
   slug: slugSchema,
   categoryId: z.string().uuid().nullable(),
+  mainCategoryId: z.string().uuid().nullable().optional(),
+  productTypeCategoryId: z.string().uuid().nullable().optional(),
   summary: z.string().trim().max(300).optional(),
   description: z.string().trim().max(5000).optional(),
   imageUrl: storageUrlSchema.nullable().optional(),
@@ -791,6 +804,8 @@ const productInputSchema = z.object({
   datasheetName: z.string().max(150).nullable().optional(),
   catalogueUrl: storageUrlSchema.nullable().optional(),
   catalogueName: z.string().max(150).nullable().optional(),
+  modelUrl: storageUrlSchema.nullable().optional(),
+  modelName: z.string().max(150).nullable().optional(),
   series: z.array(z.string().trim().min(1).max(300)).max(40).optional(),
   features: z.array(z.string().trim().min(1).max(300)).max(40).optional(),
   applications: z.array(z.string().trim().min(1).max(300)).max(40).optional(),
@@ -804,6 +819,7 @@ const productInputSchema = z.object({
   galleryStoragePaths: z.array(storagePathSchema).max(10).optional(),
   catalogueStoragePath: storagePathSchema.nullable().optional(),
   datasheetStoragePath: storagePathSchema.nullable().optional(),
+  modelStoragePath: storagePathSchema.nullable().optional(),
   technical: technicalSchema.optional(),
 });
 
@@ -830,6 +846,65 @@ async function categoryProblem(categoryId, status) {
   if (status === "published" && migrated && data.is_active === false) {
     return { code: "INCOMPLETE", message: "Cannot publish: the selected category is inactive. Choose an active category." };
   }
+  return null;
+}
+
+async function productCategoryProblem(input, status) {
+  const simpleProblem = await categoryProblem(input.categoryId, status);
+  if (simpleProblem) return simpleProblem;
+
+  const targetId = input.productTypeCategoryId ?? input.categoryId;
+  const mainId = input.mainCategoryId ?? null;
+  if (!targetId && !mainId) return null;
+  if (
+    input.categoryId &&
+    input.productTypeCategoryId &&
+    input.categoryId !== input.productTypeCategoryId
+  ) {
+    return { code: "VALIDATION", message: "The selected product type and category do not match." };
+  }
+  if (!(await hasCategoryColumns())) return null;
+
+  let category = null;
+  if (targetId) {
+    const { data, error } = await getSupabaseAdmin()
+      .from("product_categories")
+      .select("id, is_active, level, parent_id, main_category_id")
+      .eq("id", targetId)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return { code: "VALIDATION", message: "The selected product type no longer exists. Choose another category." };
+    category = data;
+    if ((category.level ?? 1) !== 1) {
+      return { code: "VALIDATION", message: "Select a product-type category, not a main category." };
+    }
+    if (status === "published" && category.is_active === false) {
+      return { code: "INCOMPLETE", message: "Cannot publish: the selected product type is inactive. Choose an active category." };
+    }
+  }
+
+  if (mainId) {
+    const { data: main, error: mainError } = await getSupabaseAdmin()
+      .from("product_categories")
+      .select("id, is_active, level")
+      .eq("id", mainId)
+      .maybeSingle();
+    if (mainError) throw mainError;
+    if (!main) return { code: "VALIDATION", message: "The selected main category no longer exists. Choose another one." };
+    if ((main.level ?? 1) !== 0) {
+      return { code: "VALIDATION", message: "The selected main category is not a top-level category." };
+    }
+    if (status === "published" && main.is_active === false) {
+      return { code: "INCOMPLETE", message: "Cannot publish: the selected main category is inactive. Choose an active category." };
+    }
+    if (category?.main_category_id && category.main_category_id !== mainId) {
+      return { code: "VALIDATION", message: "The selected product type does not belong to the selected main category." };
+    }
+    if (category && !category.main_category_id && category.parent_id && category.parent_id !== mainId) {
+      return { code: "VALIDATION", message: "The selected product type does not belong to the selected main category." };
+    }
+  }
+
   return null;
 }
 
@@ -878,6 +953,12 @@ function toProductColumns(input, schema) {
     columns.datasheet_name = hasDatasheet ? input.datasheetName || null : null;
     if (storage.datasheet) columns.datasheet_storage_path = storagePathFromReference(input.datasheetUrl, input.datasheetStoragePath);
   }
+  if (input.modelUrl !== undefined) {
+    const hasModel = Boolean(input.modelUrl);
+    columns.model_url = input.modelUrl || null;
+    columns.model_name = hasModel ? input.modelName || null : null;
+    if (storage.model) columns.model_storage_path = storagePathFromReference(input.modelUrl, input.modelStoragePath);
+  }
   if (storage.image) columns.image_storage_path = input.imageUrl !== undefined ? input.imageStoragePath || null : undefined;
   if (storage.gallery) columns.gallery_storage_paths = input.galleryImages ? input.galleryStoragePaths || [] : [];
 
@@ -911,7 +992,7 @@ const STORAGE_BUCKET = "product-uploads";
 
 // Object keys are confined to a product's own folder; anything else (legacy
 // `documents/<date>` keys, foreign URLs) is left untouched.
-const STORAGE_KEY_PATTERN = /^products\/[0-9a-f-]{36}\/(images|documents)\/[a-z0-9-]+(?:\.[a-z0-9]+)?$/;
+const STORAGE_KEY_PATTERN = /^products\/[0-9a-f-]{36}\/(images|documents|models)\/[a-z0-9-]+(?:\.[a-z0-9]+)?$/;
 
 function isStorageKey(value) {
   return typeof value === "string" && value.length <= 300 && STORAGE_KEY_PATTERN.test(value);
@@ -1023,7 +1104,7 @@ router.post("/products", requireAuth, requirePermission("products:write"), async
         return res.status(422).json({ ok: false, code: "INCOMPLETE", message: `Cannot publish yet. Missing: ${missing.join(", ")}.` });
       }
     }
-    const invalidCategory = await categoryProblem(input.categoryId, status);
+    const invalidCategory = await productCategoryProblem(input, status);
     if (invalidCategory) return res.status(422).json({ ok: false, ...invalidCategory });
 
     const schema = await productSchema();
@@ -1119,7 +1200,7 @@ router.patch("/products/:id", requireAuth, requirePermission("products:write"), 
         return res.status(422).json({ ok: false, code: "INCOMPLETE", message: `Cannot publish yet. Missing: ${missing.join(", ")}.` });
       }
     }
-    const invalidCategory = await categoryProblem(input.categoryId, nextStatus);
+    const invalidCategory = await productCategoryProblem(input, nextStatus);
     if (invalidCategory) return res.status(422).json({ ok: false, ...invalidCategory });
 
     const { data, error } = await supabase
@@ -1214,12 +1295,21 @@ router.delete("/products/:id", requireAuth, requirePermission("products:write"),
 
 
 const categoryFields = {
+  id: z.string().uuid().optional(),
   name: z.string().trim().min(2).max(60),
   slug: slugSchema.max(60),
   description: z.string().trim().max(500).default(""),
-  parentId: z.string().uuid().nullable().optional(),
   isActive: z.boolean().optional(),
   sortOrder: z.number().int().min(0).max(9999).optional(),
+  mainCategoryId: z.string().uuid().nullable().optional(),
+  content: z.string().trim().max(5000).optional(),
+  howItWorks: z.string().trim().max(5000).optional(),
+  applications: z.string().trim().max(5000).optional(),
+  usageInfo: z.string().trim().max(5000).optional(),
+  industries: z.string().trim().max(5000).optional(),
+  additionalInfo: z.string().trim().max(5000).optional(),
+  categoryImageUrl: z.string().max(500).nullable().optional(),
+  categoryImageStoragePath: z.string().max(300).nullable().optional(),
 };
 
 const categoryInputSchema = z.object(categoryFields);
@@ -1227,12 +1317,27 @@ const categoryPatchSchema = z.object(categoryFields).partial().refine((value) =>
   message: "Nothing to update",
 });
 
-const CATEGORY_COLUMNS = "id, slug, name, description, parent_id, is_active, sort_order";
+const CATEGORY_COLUMNS = "id, slug, name, description, parent_id, is_active, sort_order, level, main_category_id, content, how_it_works, applications, usage_info, industries, additional_info, category_image_url, category_image_storage_path";
 const LEGACY_CATEGORY_COLUMNS = "id, slug, name, sort_order";
 
 // Rows read as active roots before the hierarchy migration has been applied.
 function withCategoryDefaults(row) {
-  return { ...row, description: "", parent_id: null, is_active: true };
+  return {
+    ...row,
+    description: "",
+    parent_id: null,
+    is_active: true,
+    level: 1,
+    main_category_id: null,
+    content: "",
+    how_it_works: "",
+    applications: "",
+    usage_info: "",
+    industries: "",
+    additional_info: "",
+    category_image_url: null,
+    category_image_storage_path: null
+  };
 }
 
 function toCategory(row, productCount = 0, childIds = []) {
@@ -1240,12 +1345,22 @@ function toCategory(row, productCount = 0, childIds = []) {
     id: row.id,
     slug: row.slug,
     name: row.name,
-    description: row.description ?? "",
+    description: textValue(row.description),
     parentId: row.parent_id ?? null,
     isActive: row.is_active ?? true,
     sortOrder: row.sort_order ?? 0,
     productCount,
     childIds,
+    level: row.level ?? 1,
+    mainCategoryId: row.main_category_id ?? null,
+    content: textValue(row.content),
+    howItWorks: textValue(row.how_it_works),
+    applications: textValue(row.applications),
+    usageInfo: textValue(row.usage_info),
+    industries: textValue(row.industries),
+    additionalInfo: textValue(row.additional_info),
+    categoryImageUrl: row.category_image_url ?? null,
+    categoryImageStoragePath: row.category_image_storage_path ?? null,
   };
 }
 
@@ -1272,23 +1387,32 @@ async function loadCategoryRow(supabase, id) {
   return data && !("is_active" in data) ? withCategoryDefaults(data) : data;
 }
 
-// An active parent is required, so an active category never hides behind a
-// deactivated one in the public menu. Nesting is one level deep.
-async function resolveParent(supabase, parentId, categoryId) {
-  if (!parentId) return { parentId: null };
-  if (categoryId && parentId === categoryId) return { error: "A category cannot be its own parent." };
-
-  const parent = await loadCategoryRow(supabase, parentId);
-  if (!parent) return { error: "Parent category not found." };
-  if (!parent.is_active) return { error: "The parent category is inactive." };
-  if (parent.parent_id) return { error: "Categories can only be nested one level deep." };
-  return { parentId };
-}
-
 async function hasChildren(supabase, id) {
   const { data, error } = await supabase.from("product_categories").select("id").eq("parent_id", id).limit(1);
   if (error) throw error;
   return Boolean(data?.length);
+}
+
+async function resolveMainCategory(supabase, mainCategoryId) {
+  if (!mainCategoryId) return { error: "Select a main category." };
+  const { data, error } = await supabase
+    .from("product_categories")
+    .select("id, slug, level, is_active")
+    .eq("id", mainCategoryId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return { error: "The selected main category no longer exists." };
+  if ((data.level ?? 1) !== 0) return { error: "Select a valid top-level main category." };
+  if (!APPROVED_MAIN_CATEGORY_SLUGS.includes(data.slug)) return { error: "Select one of the approved main categories." };
+  if (data.is_active === false) return { error: "The selected main category is inactive." };
+  return { mainCategoryId: data.id };
+}
+
+async function removeCategoryImageKeys(keys) {
+  const unique = [...new Set(keys)].filter(isCategoryImageKey);
+  if (!unique.length) return;
+  const { error } = await storageBucket().remove(unique);
+  if (error) console.warn("[admin-categories] storage cleanup failed:", error.message);
 }
 
 router.get("/categories", requireAuth, async (req, res) => {
@@ -1328,19 +1452,34 @@ router.post("/categories", requireAuth, requirePermission("categories:write"), a
     }
 
     const supabase = getSupabaseAdmin();
-    const parent = await resolveParent(supabase, parsed.data.parentId);
-    if (parent.error) return res.status(422).json({ ok: false, code: "VALIDATION", message: parent.error });
+    const main = await resolveMainCategory(supabase, parsed.data.mainCategoryId);
+    if (main.error) return res.status(422).json({ ok: false, code: "VALIDATION", message: main.error });
 
     const migrated = await hasCategoryColumns();
+    const imagePath = isCategoryImageKey(parsed.data.categoryImageStoragePath) ? parsed.data.categoryImageStoragePath : null;
     const { data, error } = await supabase
       .from("product_categories")
       .insert({
-        id: randomUUID(),
+        id: parsed.data.id ?? randomUUID(),
         name: parsed.data.name,
         slug: parsed.data.slug,
         sort_order: parsed.data.sortOrder ?? 0,
         ...(migrated
-          ? { description: parsed.data.description, parent_id: parent.parentId, is_active: parsed.data.isActive ?? true }
+          ? {
+              description: parsed.data.description,
+              parent_id: null,
+              is_active: parsed.data.isActive ?? true,
+              level: 1,
+              main_category_id: main.mainCategoryId,
+              content: parsed.data.content ?? "",
+              how_it_works: parsed.data.howItWorks ?? "",
+              applications: parsed.data.applications ?? "",
+              usage_info: parsed.data.usageInfo ?? "",
+              industries: parsed.data.industries ?? "",
+              additional_info: parsed.data.additionalInfo ?? "",
+              category_image_url: imagePath ? parsed.data.categoryImageUrl ?? null : null,
+              category_image_storage_path: imagePath
+            }
           : {}),
       })
       .select("id")
@@ -1378,27 +1517,47 @@ router.patch("/categories/:id", requireAuth, requirePermission("categories:write
     if (migrated) {
       update.updated_at = new Date().toISOString();
       if (input.description !== undefined) update.description = input.description;
+      if (input.content !== undefined) update.content = input.content;
+      if (input.howItWorks !== undefined) update.how_it_works = input.howItWorks;
+      if (input.applications !== undefined) update.applications = input.applications;
+      if (input.usageInfo !== undefined) update.usage_info = input.usageInfo;
+      if (input.industries !== undefined) update.industries = input.industries;
+      if (input.additionalInfo !== undefined) update.additional_info = input.additionalInfo;
     }
 
-    if (input.parentId !== undefined) {
-      const parent = await resolveParent(supabase, input.parentId, current.id);
-      if (parent.error) return res.status(422).json({ ok: false, code: "VALIDATION", message: parent.error });
-      if (!parent.parentId && (await hasChildren(supabase, current.id))) {
-        return res.status(422).json({ ok: false, code: "HAS_CHILDREN", message: "Move its sub-categories first." });
+    const isMainCategory = (current.level ?? 1) === 0;
+    let oldImagePath = isCategoryImageKey(current.category_image_storage_path)
+      ? current.category_image_storage_path
+      : null;
+    if (!oldImagePath) {
+      const derived = storageKeyFromUrl(current.category_image_url);
+      if (isCategoryImageKey(derived)) oldImagePath = derived;
+    }
+
+    if (migrated && !isMainCategory) {
+      const mainId = input.mainCategoryId !== undefined ? input.mainCategoryId : current.main_category_id;
+      const main = await resolveMainCategory(supabase, mainId);
+      if (main.error) return res.status(422).json({ ok: false, code: "VALIDATION", message: main.error });
+      update.main_category_id = main.mainCategoryId;
+    }
+
+    let imageChanged = false;
+    if (migrated && (input.categoryImageUrl !== undefined || input.categoryImageStoragePath !== undefined)) {
+      imageChanged = true;
+      const url = input.categoryImageUrl !== undefined ? input.categoryImageUrl : current.category_image_url;
+      const path = input.categoryImageStoragePath !== undefined ? input.categoryImageStoragePath : current.category_image_storage_path;
+      let newPath = isCategoryImageKey(path) ? path : null;
+      if (!newPath) {
+        const derived = storageKeyFromUrl(url);
+        if (isCategoryImageKey(derived)) newPath = derived;
       }
-      update.parent_id = parent.parentId;
+      update.category_image_url = newPath ? url ?? null : null;
+      update.category_image_storage_path = newPath;
     }
 
     if (input.isActive !== undefined) {
       if (input.isActive === false && (await hasChildren(supabase, current.id))) {
         return res.status(409).json({ ok: false, code: "HAS_CHILDREN", message: "Deactivate its sub-categories first." });
-      }
-      // Reactivating underneath an inactive parent would hide it again.
-      if (input.isActive && current.parent_id) {
-        const parent = await loadCategoryRow(supabase, current.parent_id);
-        if (parent && !parent.is_active) {
-          return res.status(409).json({ ok: false, code: "PARENT_INACTIVE", message: "Activate its parent category first." });
-        }
       }
       update.is_active = input.isActive;
     }
@@ -1407,6 +1566,10 @@ router.patch("/categories/:id", requireAuth, requirePermission("categories:write
     if (error) {
       if (error.code === "23505") return res.status(409).json({ ok: false, code: "CONFLICT", message: "A category with this URL slug already exists." });
       throw error;
+    }
+
+    if (imageChanged && oldImagePath && oldImagePath !== update.category_image_storage_path) {
+      await removeCategoryImageKeys([oldImagePath]);
     }
 
     res.json({ ok: true });
@@ -1589,6 +1752,7 @@ router.patch("/users/:id", requireAuth, requirePermission("users:manage"), async
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_PDF_BYTES = 10 * 1024 * 1024;
+const MAX_MODEL_BYTES = 25 * 1024 * 1024;
 
 function detectFileType(buffer) {
   if (buffer.length > 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
@@ -1603,14 +1767,19 @@ function detectFileType(buffer) {
   if (buffer.length > 5 && buffer.subarray(0, 5).toString("ascii") === "%PDF-") {
     return { ext: "pdf", mime: "application/pdf", max: MAX_PDF_BYTES };
   }
+  if (buffer.length > 4 && buffer.subarray(0, 4).equals(Buffer.from([0x67, 0x6c, 0x54, 0x46]))) {
+    return { ext: "glb", mime: "model/gltf-binary", max: MAX_MODEL_BYTES };
+  }
   return null;
 }
 
 // Upload slots map onto the product's own storage folder:
-// products/{productId}/images/{slot}-{id}.{ext} or .../documents/{slot}-{id}.pdf
+// products/{productId}/images/{slot}-{id}.{ext} or .../documents/{slot}-{id}.pdf or .../models/{slot}-{id}.glb
 const UPLOAD_SLOTS = {
   image: ["main", "gallery"],
   document: ["catalogue", "datasheet"],
+  model: ["model"],
+  "category-image": ["category"],
 };
 
 router.post("/uploads", requireAuth, requirePermission("files:upload"), async (req, res) => {
@@ -1620,26 +1789,39 @@ router.post("/uploads", requireAuth, requirePermission("files:upload"), async (r
       return res.status(422).json({ ok: false, code: "VALIDATION", message: "No file provided." });
     }
 
-    const { file: fileBase64, kind, slot = kind, productId } = formData;
+    const { file: fileBase64, kind, slot = kind, productId, categoryId } = formData;
     if (!fileBase64 || !UPLOAD_SLOTS[kind]?.includes(slot)) {
       return res.status(422).json({ ok: false, code: "VALIDATION", message: "No file provided." });
     }
-    if (!z.string().uuid().safeParse(productId).success) {
+    const isCategoryImage = kind === "category-image";
+    if (isCategoryImage) {
+      if (!z.string().uuid().safeParse(categoryId).success) {
+        return res.status(422).json({ ok: false, code: "VALIDATION", message: "A category is required before uploading an image." });
+      }
+    } else if (!z.string().uuid().safeParse(productId).success) {
       return res.status(422).json({ ok: false, code: "VALIDATION", message: "Save the product before uploading files." });
     }
 
     const buffer = Buffer.from(fileBase64, "base64");
     if (buffer.length === 0 || buffer.length > MAX_PDF_BYTES) {
-      return res.status(422).json({ ok: false, code: "TOO_LARGE", message: "File is empty or too large." });
+      // Check model size separately
+      if (!(kind === "model" && buffer.length <= MAX_MODEL_BYTES)) {
+        return res.status(422).json({ ok: false, code: "TOO_LARGE", message: "File is empty or too large." });
+      }
     }
 
     const detected = detectFileType(buffer);
     if (!detected) {
-      return res.status(422).json({ ok: false, code: "UNSUPPORTED_TYPE", message: "Only JPG, PNG, WebP images or PDF documents are allowed." });
+      return res.status(422).json({ ok: false, code: "UNSUPPORTED_TYPE", message: "Only JPG, PNG, WebP images, PDF documents, or GLB 3D models are allowed." });
     }
 
     const isPdf = detected.mime === "application/pdf";
-    if ((kind === "image" && isPdf) || (kind === "document" && !isPdf)) {
+    const isModel = detected.mime === "model/gltf-binary";
+    if (
+      ((kind === "image" || isCategoryImage) && (isPdf || isModel)) ||
+      (kind === "document" && (!isPdf || isModel)) ||
+      (kind === "model" && !isModel)
+    ) {
       return res.status(422).json({ ok: false, code: "UNSUPPORTED_TYPE", message: "The file type does not match the field." });
     }
     if (isPdf && !buffer.subarray(0, 1024).toString("latin1").includes("%PDF-")) {
@@ -1649,11 +1831,14 @@ router.post("/uploads", requireAuth, requirePermission("files:upload"), async (r
       return res.status(422).json({
         ok: false,
         code: "TOO_LARGE",
-        message: isPdf ? "PDFs must be 10 MB or smaller." : "Images must be 5 MB or smaller.",
+        message: isPdf ? "PDFs must be 10 MB or smaller." : isModel ? "GLB models must be 25 MB or smaller." : "Images must be 5 MB or smaller.",
       });
     }
 
-    const key = `products/${productId}/${kind === "image" ? "images" : "documents"}/${slot}-${randomUUID()}.${detected.ext}`;
+    const folder = kind === "image" ? "images" : kind === "document" ? "documents" : "models";
+    const key = isCategoryImage
+      ? `categories/${categoryId}/category-image-${randomUUID()}.${detected.ext}`
+      : `products/${productId}/${folder}/${slot}-${randomUUID()}.${detected.ext}`;
     const storage = storageBucket();
     const { error: uploadError } = await storage.upload(key, buffer, {
       contentType: detected.mime,
@@ -1663,11 +1848,12 @@ router.post("/uploads", requireAuth, requirePermission("files:upload"), async (r
     if (uploadError) throw uploadError;
 
     const { data: urlData } = storage.getPublicUrl(key);
-    // PDFs are only handed out by the access-controlled proxy; images stay public.
+    // PDFs are only handed out by the access-controlled proxy; images and models stay public.
     const url = isPdf ? `${PRIVATE_PREFIX}${key}` : urlData.publicUrl;
 
-    if (!pendingUploadRegistry.has(productId)) pendingUploadRegistry.set(productId, new Map());
-    pendingUploadRegistry.get(productId).set(slot, Date.now());
+    const registryKey = isCategoryImage ? categoryId : productId;
+    if (!pendingUploadRegistry.has(registryKey)) pendingUploadRegistry.set(registryKey, new Map());
+    pendingUploadRegistry.get(registryKey).set(slot, Date.now());
 
     res.status(201).json({
       ok: true,
@@ -1679,6 +1865,20 @@ router.post("/uploads", requireAuth, requirePermission("files:upload"), async (r
   } catch (err) {
     console.error("POST /api/admin/uploads error:", err);
     res.status(500).json({ ok: false, message: "Upload failed" });
+  }
+});
+
+router.delete("/uploads", requireAuth, requirePermission("files:upload"), async (req, res) => {
+  try {
+    const key = req.body?.path;
+    if (!isCategoryImageKey(key)) {
+      return res.status(422).json({ ok: false, code: "VALIDATION", message: "Invalid image path." });
+    }
+    await removeCategoryImageKeys([key]);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("DELETE /api/admin/uploads error:", err);
+    res.status(500).json({ ok: false, message: "Failed to remove image" });
   }
 });
 

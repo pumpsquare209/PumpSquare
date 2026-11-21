@@ -43,20 +43,18 @@ export const navLinks = [
 
 export const productMenu = [
   {
-    heading: "Pumpsquare Products",
-    items: [
-      // Category slugs come from the product_categories table in Supabase.
-      { label: "Pumps", href: "/products?category=pumps" },
-      { label: "Valves", href: "/products?category=valves" },
-      { label: "Filters & Strainers", href: "/products?category=filters-strainers" },
-      { label: "Other Divisions", href: "/products?category=other-divisions" },
-    ],
+    slug: "pumps-manufactured-by-us",
+    label: "Pumps Manufactured by Us",
+    description: "Explore our range of pumps engineered and manufactured by Pumpsquare.",
+    href: "/products/category/pumps-manufactured-by-us",
+    icon: "factory",
   },
   {
-    heading: "SEIM SRL Pumps",
-    items: [
-      { label: "Pumps Series", href: "/products?category=seim-srl-pumps" },
-    ],
+    slug: "pumps-traded-by-us",
+    label: "Pumps Traded by Us (SEIM Pumps)",
+    description: "Explore our range of genuine SEIM pumps and associated equipment.",
+    href: "/products/category/pumps-traded-by-us",
+    icon: "package",
   },
 ] as const;
 

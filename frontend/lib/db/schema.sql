@@ -37,16 +37,38 @@ create table if not exists product_categories (
   description text not null default '',
   parent_id uuid references product_categories (id) on delete set null,
   is_active boolean not null default true,
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  level int not null default 1 check (level in (0, 1)),
+  main_category_id uuid references product_categories (id) on delete set null,
+  content text not null default '',
+  how_it_works text not null default '',
+  applications text not null default '',
+  usage_info text not null default '',
+  industries text not null default '',
+  additional_info text not null default '',
+  category_image_url text,
+  category_image_storage_path text
 );
 
 alter table product_categories add column if not exists description text not null default '';
 alter table product_categories add column if not exists parent_id uuid references product_categories (id) on delete set null;
 alter table product_categories add column if not exists is_active boolean not null default true;
 alter table product_categories add column if not exists updated_at timestamptz not null default now();
+alter table product_categories add column if not exists level int not null default 1 check (level in (0, 1));
+alter table product_categories add column if not exists main_category_id uuid references product_categories (id) on delete set null;
+alter table product_categories add column if not exists content text not null default '';
+alter table product_categories add column if not exists how_it_works text not null default '';
+alter table product_categories add column if not exists applications text not null default '';
+alter table product_categories add column if not exists usage_info text not null default '';
+alter table product_categories add column if not exists industries text not null default '';
+alter table product_categories add column if not exists additional_info text not null default '';
+alter table product_categories add column if not exists category_image_url text;
+alter table product_categories add column if not exists category_image_storage_path text;
 
 create index if not exists product_categories_parent_idx on product_categories (parent_id);
 create index if not exists product_categories_active_idx on product_categories (is_active);
+create index if not exists product_categories_main_category_idx on product_categories (main_category_id);
+create index if not exists product_categories_level_idx on product_categories (level);
 
 create table if not exists products (
   id uuid primary key,
@@ -77,7 +99,10 @@ create table if not exists products (
   image_storage_path text,
   gallery_storage_paths text[] not null default '{}',
   catalogue_storage_path text,
-  datasheet_storage_path text
+  datasheet_storage_path text,
+  model_url text,
+  model_storage_path text,
+  model_name text
 );
 
 alter table products add column if not exists deleted_at timestamptz;
@@ -91,11 +116,15 @@ alter table products add column if not exists image_storage_path text;
 alter table products add column if not exists gallery_storage_paths text[] not null default '{}';
 alter table products add column if not exists catalogue_storage_path text;
 alter table products add column if not exists datasheet_storage_path text;
+alter table products add column if not exists model_url text;
+alter table products add column if not exists model_storage_path text;
+alter table products add column if not exists model_name text;
 
 create index if not exists products_status_idx on products (status);
 create index if not exists products_category_idx on products (category_id);
 create index if not exists products_display_order_idx on products (display_order, name);
 create index if not exists products_deleted_idx on products (deleted_at);
+create index if not exists products_model_idx on products (model_storage_path);
 
 alter table admin_users enable row level security;
 alter table admin_sessions enable row level security;

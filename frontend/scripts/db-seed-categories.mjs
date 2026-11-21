@@ -26,7 +26,7 @@ const start = schema.indexOf("create table if not exists product_categories");
 const end = schema.indexOf("create table if not exists products");
 if (start < 0 || end < 0) throw new Error("Category section not found in lib/db/schema.sql");
 
-const { seedPumpsquareCategories, PUMPSQUARE_CATEGORIES } = await import("../lib/db/category-seed.ts");
+const { seedPumpsquareCategories, PUMPSQUARE_CATEGORIES } = await import("../lib/db/category-seed.mjs");
 
 const client = await pool.connect();
 try {

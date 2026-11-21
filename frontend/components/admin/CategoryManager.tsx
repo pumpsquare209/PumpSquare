@@ -1,33 +1,66 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Archive, ArrowDown, ArrowUp, Loader2, Pencil, Plus, Trash2, X } from "lucide-react";
+import { Archive, ArrowDown, ArrowUp, CloudUpload, Loader2, Pencil, Plus, Trash2, X } from "lucide-react";
+import { categoryText } from "@/lib/category-content";
 import type { AdminCategory } from "@/lib/products";
 import { slugify } from "@/lib/slugify";
 
 const input = "w-full rounded-md border border-line bg-white px-3 py-2 text-sm focus:border-primary focus:outline-none";
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp"];
+const ACCEPTED_IMAGE_EXTENSIONS = /\.(png|jpe?g|webp)$/i;
+
+const MAIN_CATEGORY_OPTIONS = [
+  { slug: "pumps-manufactured-by-us", label: "Pumps Manufactured by Us" },
+  { slug: "pumps-traded-by-us", label: "Pumps Traded by Us (SEIM Pumps)" },
+] as const;
 
 type Draft = {
   name: string;
   slug: string;
   description: string;
-  parentId: string;
   sortOrder: string;
   isActive: boolean;
+  mainCategoryId: string;
+  content: string;
+  howItWorks: string;
+  applications: string;
+  usageInfo: string;
+  industries: string;
+  additionalInfo: string;
+  categoryImageUrl: string;
+  categoryImageStoragePath: string;
 };
 
-const emptyDraft = (categories: AdminCategory[]): Draft => ({
-  name: "",
-  slug: "",
-  description: "",
-  parentId: "",
-  sortOrder: String(
-    categories.reduce((max, category) => Math.max(max, category.sortOrder ?? 0), -1) + 10,
-  ),
-  isActive: true,
-});
+function approvedMainCategory(categories: AdminCategory[], slug: string) {
+  return categories.find((category) => category.slug === slug && category.level === 0);
+}
+
+function defaultMainCategoryId(categories: AdminCategory[]) {
+  return MAIN_CATEGORY_OPTIONS.map((option) => approvedMainCategory(categories, option.slug)?.id).find(Boolean) ?? "";
+}
+
+function emptyDraft(categories: AdminCategory[]): Draft {
+  return {
+    name: "",
+    slug: "",
+    description: "",
+    sortOrder: String(categories.reduce((max, category) => Math.max(max, category.sortOrder ?? 0), -1) + 10),
+    isActive: true,
+    mainCategoryId: defaultMainCategoryId(categories),
+    content: "",
+    howItWorks: "",
+    applications: "",
+    usageInfo: "",
+    industries: "",
+    additionalInfo: "",
+    categoryImageUrl: "",
+    categoryImageStoragePath: "",
+  };
+}
 
 function byOrder(a: AdminCategory, b: AdminCategory) {
   return (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.name.localeCompare(b.name);
@@ -44,46 +77,93 @@ function orderedTree(categories: AdminCategory[]) {
   ]);
 }
 
-export default function CategoryManager({
-  categories,
-  canEdit,
-}: {
-  categories: AdminCategory[];
-  canEdit: boolean;
-}) {
+function nameFromPath(path: string | null | undefined) {
+  return path ? path.split("/").pop() ?? null : null;
+}
+
+export default function CategoryManager({ categories, canEdit }: { categories: AdminCategory[]; canEdit: boolean }) {
   const router = useRouter();
+  const fileInput = useRef<HTMLInputElement>(null);
   const [draft, setDraft] = useState<Draft>(() => emptyDraft(categories));
   const [editing, setEditing] = useState<AdminCategory | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [imageName, setImageName] = useState<string | null>(null);
+  const [imageUpload, setImageUpload] = useState<{ progress: number; label: string } | null>(null);
+  const [imageMessage, setImageMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [imageCategoryId, setImageCategoryId] = useState<string | null>(null);
+  const [pendingImagePath, setPendingImagePath] = useState<string | null>(null);
+  const [previewErrorSrc, setPreviewErrorSrc] = useState<string | null>(null);
 
   const rows = orderedTree(categories);
-  // Only top-level categories can be parents, and only while they have no children.
-  const parentOptions = categories
-    .filter((category) => !category.parentId && (category.id === editing?.parentId || !(category.childIds?.length ?? 0)))
-    .sort(byOrder);
+  const previewSrc = previewUrl || draft.categoryImageUrl;
+  const previewBroken = Boolean(previewSrc && previewErrorSrc === previewSrc);
+  const mainCategoryOptions = MAIN_CATEGORY_OPTIONS.map((option) => {
+    const category = approvedMainCategory(categories, option.slug);
+    return { id: category?.id ?? "", label: option.label, available: Boolean(category && category.isActive !== false) };
+  });
+
+  useEffect(() => {
+    return () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    };
+  }, [previewUrl]);
 
   function update(patch: Partial<Draft>) {
     setDraft((current) => ({ ...current, ...patch }));
   }
 
   function reset() {
+    if (pendingImagePath) void deleteUploadedImage(pendingImagePath);
     setEditing(null);
     setDraft(emptyDraft(categories));
     setError(null);
+    setDragging(false);
+    setPreviewUrl(null);
+    setImageName(null);
+    setImageUpload(null);
+    setImageMessage(null);
+    setImageCategoryId(null);
+    setPendingImagePath(null);
+    setPreviewErrorSrc(null);
   }
 
   function startEdit(category: AdminCategory) {
+    const approvedIds = MAIN_CATEGORY_OPTIONS.map((option) => approvedMainCategory(categories, option.slug)?.id).filter(Boolean) as string[];
+    let mainCategoryId = "";
+    if (category.level !== 0) {
+      if (category.mainCategoryId && approvedIds.includes(category.mainCategoryId)) mainCategoryId = category.mainCategoryId;
+      else if (category.parentId && approvedIds.includes(category.parentId)) mainCategoryId = category.parentId;
+      else mainCategoryId = defaultMainCategoryId(categories);
+    }
+
     setEditing(category);
     setDraft({
-      name: category.name,
-      slug: category.slug,
-      description: category.description ?? "",
-      parentId: category.parentId ?? "",
+      name: categoryText(category.name),
+      slug: categoryText(category.slug),
+      description: categoryText(category.description),
       sortOrder: String(category.sortOrder ?? 0),
       isActive: category.isActive !== false,
+      mainCategoryId,
+      content: categoryText(category.content),
+      howItWorks: categoryText(category.howItWorks),
+      applications: categoryText(category.applications),
+      usageInfo: categoryText(category.usageInfo),
+      industries: categoryText(category.industries),
+      additionalInfo: categoryText(category.additionalInfo),
+      categoryImageUrl: categoryText(category.categoryImageUrl),
+      categoryImageStoragePath: categoryText(category.categoryImageStoragePath),
     });
     setError(null);
+    setPreviewUrl(null);
+    setImageName(nameFromPath(category.categoryImageStoragePath));
+    setImageUpload(null);
+    setImageMessage(null);
+    setImageCategoryId(null);
+    setPendingImagePath(null);
+    setPreviewErrorSrc(null);
   }
 
   async function send(url: string, method: string, body?: unknown) {
@@ -96,24 +176,134 @@ export default function CategoryManager({
     if (!response.ok || !data.ok) throw new Error(data.message ?? "Could not save the category.");
   }
 
+  async function deleteUploadedImage(path: string) {
+    try {
+      await fetch("/api/admin/uploads", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path }),
+      });
+    } catch {
+      setImageMessage({ type: "error", text: "Could not remove the uploaded image." });
+    }
+  }
+
+  async function pickImage(file: File) {
+    setError(null);
+    if (!ACCEPTED_IMAGE_TYPES.includes(file.type) || !ACCEPTED_IMAGE_EXTENSIONS.test(file.name)) {
+      setImageMessage({ type: "error", text: "Use a PNG, JPG, JPEG or WebP image." });
+      return;
+    }
+    if (file.size > MAX_IMAGE_BYTES) {
+      setImageMessage({ type: "error", text: "Images must be 5 MB or smaller." });
+      return;
+    }
+
+    setDragging(false);
+    setImageMessage(null);
+    setPreviewErrorSrc(null);
+    setImageUpload({ progress: 0, label: "Uploading image" });
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    setPreviewUrl(URL.createObjectURL(file));
+    setImageName(file.name);
+
+    try {
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result).split(",")[1] ?? "");
+        reader.onerror = () => reject(new Error("Could not read the image."));
+        reader.readAsDataURL(file);
+      });
+
+      const targetId = editing?.id ?? imageCategoryId ?? crypto.randomUUID();
+      if (!editing) setImageCategoryId(targetId);
+
+      const result = await new Promise<{ url: string; path: string; name: string }>((resolve, reject) => {
+        const request = new XMLHttpRequest();
+        request.open("POST", "/api/admin/uploads");
+        request.setRequestHeader("Content-Type", "application/json");
+        request.upload.onprogress = (event) => {
+          if (event.lengthComputable) {
+            setImageUpload({ progress: Math.round((event.loaded / event.total) * 100), label: "Uploading image" });
+          }
+        };
+        request.onload = () => {
+          let data: { ok?: boolean; url?: string; path?: string; name?: string; message?: string } = {};
+          try {
+            data = JSON.parse(request.responseText) as typeof data;
+          } catch {
+            data = {};
+          }
+          if (request.status >= 200 && request.status < 300 && data.ok && data.url && data.path) {
+            resolve({ url: data.url, path: data.path, name: data.name ?? file.name });
+          } else {
+            reject(new Error(data.message ?? "Image upload failed."));
+          }
+        };
+        request.onerror = () => reject(new Error("Image upload failed."));
+        request.send(JSON.stringify({ kind: "category-image", slot: "category", categoryId: targetId, name: file.name, file: base64 }));
+      });
+
+      update({ categoryImageUrl: result.url, categoryImageStoragePath: result.path });
+      setImageName(result.name);
+      setPendingImagePath(result.path);
+      setImageUpload(null);
+      setImageMessage({ type: "success", text: "Image uploaded. Save the category to apply it." });
+    } catch (caught) {
+      setPreviewUrl(null);
+      setImageName(null);
+      setImageUpload(null);
+      setImageMessage({ type: "error", text: caught instanceof Error ? caught.message : "Image upload failed." });
+    }
+  }
+
+  function removeImage() {
+    if (pendingImagePath) void deleteUploadedImage(pendingImagePath);
+    setPendingImagePath(null);
+    setPreviewUrl(null);
+    setImageName(null);
+    setImageUpload(null);
+    setPreviewErrorSrc(null);
+    setImageMessage({ type: "success", text: "Image removed. Save the category to apply this change." });
+    update({ categoryImageUrl: "", categoryImageStoragePath: "" });
+  }
+
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (busy) return;
+    if (imageUpload) return;
+    if (editing?.level !== 0 && !draft.mainCategoryId) {
+      setError("Select a main category.");
+      return;
+    }
+
     setBusy(true);
     setError(null);
 
     const order = Number.parseInt(draft.sortOrder, 10);
+    const imageUrl = draft.categoryImageUrl.trim() || null;
+    const imagePath = draft.categoryImageStoragePath.trim() || null;
     const body = {
       name: draft.name.trim(),
       slug: draft.slug.trim(),
       description: draft.description.trim(),
-      parentId: draft.parentId || null,
       sortOrder: Number.isFinite(order) ? order : 0,
       isActive: draft.isActive,
+      mainCategoryId: draft.mainCategoryId || null,
+      content: draft.content.trim(),
+      howItWorks: draft.howItWorks.trim(),
+      applications: draft.applications.trim(),
+      usageInfo: draft.usageInfo.trim(),
+      industries: draft.industries.trim(),
+      additionalInfo: draft.additionalInfo.trim(),
+      ...(!editing || imageUrl !== (editing.categoryImageUrl ?? null) ? { categoryImageUrl: imageUrl } : {}),
+      ...(!editing || imagePath !== (editing.categoryImageStoragePath ?? null) ? { categoryImageStoragePath: imagePath } : {}),
+      ...(!editing && imageCategoryId ? { id: imageCategoryId } : {}),
     };
 
     try {
       await send(editing ? `/api/admin/categories/${editing.id}` : "/api/admin/categories", editing ? "PATCH" : "POST", body);
+      setPendingImagePath(null);
       reset();
       router.refresh();
     } catch (caught) {
@@ -148,7 +338,6 @@ export default function CategoryManager({
     setBusy(true);
     setError(null);
     try {
-      // Swap display order with the neighbour; nudge equal values so the swap always takes effect.
       await send(`/api/admin/categories/${category.id}`, "PATCH", {
         sortOrder: targetOrder === order ? targetOrder + direction : targetOrder,
       });
@@ -321,9 +510,7 @@ export default function CategoryManager({
 
       {canEdit ? (
         <form onSubmit={submit} className="h-fit rounded-xl border border-line bg-white p-5">
-          <h2 className="font-display text-base font-bold text-primary-deep">
-            {editing ? "Edit category" : "Add category"}
-          </h2>
+          <h2 className="font-display text-base font-bold text-primary-deep">{editing ? "Edit category" : "Add category"}</h2>
           <div className="mt-4 space-y-3">
             <div>
               <label htmlFor="category-name" className="text-sm font-semibold text-ink">Name</label>
@@ -352,27 +539,6 @@ export default function CategoryManager({
               />
             </div>
             <div>
-              <label htmlFor="category-parent" className="text-sm font-semibold text-ink">Parent category</label>
-              <select
-                id="category-parent"
-                value={draft.parentId}
-                onChange={(event) => update({ parentId: event.target.value })}
-                className={`mt-1.5 ${input}`}
-                disabled={Boolean(editing && (editing.childIds?.length ?? 0) > 0)}
-              >
-                <option value="">None (top-level)</option>
-                {parentOptions
-                  .filter((category) => category.id !== editing?.id)
-                  .map((category) => (
-                    <option key={category.id} value={category.id}>
-                      {category.name}
-                      {category.isActive === false ? " (inactive)" : ""}
-                    </option>
-                  ))}
-              </select>
-              <p className="mt-1 text-xs text-muted">Sub-categories are listed under their parent in the product form.</p>
-            </div>
-            <div>
               <label htmlFor="category-description" className="text-sm font-semibold text-ink">Description</label>
               <textarea
                 id="category-description"
@@ -382,6 +548,197 @@ export default function CategoryManager({
                 maxLength={300}
                 className={`mt-1.5 ${input}`}
               />
+            </div>
+            <div>
+              <label htmlFor="category-main-category" className="text-sm font-semibold text-ink">Main Category</label>
+              <select
+                id="category-main-category"
+                value={draft.mainCategoryId}
+                onChange={(event) => update({ mainCategoryId: event.target.value })}
+                className={`mt-1.5 ${input}`}
+                required={editing?.level !== 0}
+              >
+                {mainCategoryOptions.map((option) => (
+                  <option key={option.label} value={option.id} disabled={!option.id || !option.available}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-muted">Every product-type category belongs directly to one of these main categories.</p>
+            </div>
+            <div>
+              <label htmlFor="category-content" className="text-sm font-semibold text-ink">Category Content</label>
+              <textarea
+                id="category-content"
+                value={draft.content}
+                onChange={(event) => update({ content: event.target.value })}
+                rows={3}
+                maxLength={5000}
+                className={`mt-1.5 ${input}`}
+              />
+              <p className="mt-1 text-xs text-muted">Introduction/description for the category page.</p>
+            </div>
+            <div>
+              <label htmlFor="category-how-it-works" className="text-sm font-semibold text-ink">How It Works</label>
+              <textarea
+                id="category-how-it-works"
+                value={draft.howItWorks}
+                onChange={(event) => update({ howItWorks: event.target.value })}
+                rows={3}
+                maxLength={5000}
+                className={`mt-1.5 ${input}`}
+              />
+              <p className="mt-1 text-xs text-muted">Operating principle for this pump type.</p>
+            </div>
+            <div>
+              <label htmlFor="category-applications" className="text-sm font-semibold text-ink">Applications</label>
+              <textarea
+                id="category-applications"
+                value={draft.applications}
+                onChange={(event) => update({ applications: event.target.value })}
+                rows={2}
+                maxLength={5000}
+                className={`mt-1.5 ${input}`}
+              />
+              <p className="mt-1 text-xs text-muted">Where this pump type is used.</p>
+            </div>
+            <div>
+              <label htmlFor="category-usage-info" className="text-sm font-semibold text-ink">Why Use It</label>
+              <textarea
+                id="category-usage-info"
+                value={draft.usageInfo}
+                onChange={(event) => update({ usageInfo: event.target.value })}
+                rows={2}
+                maxLength={5000}
+                className={`mt-1.5 ${input}`}
+              />
+              <p className="mt-1 text-xs text-muted">Benefits and reasons to select this pump type.</p>
+            </div>
+            <div>
+              <label htmlFor="category-industries" className="text-sm font-semibold text-ink">Industries</label>
+              <textarea
+                id="category-industries"
+                value={draft.industries}
+                onChange={(event) => update({ industries: event.target.value })}
+                rows={2}
+                maxLength={5000}
+                className={`mt-1.5 ${input}`}
+              />
+              <p className="mt-1 text-xs text-muted">Industries served by this pump type.</p>
+            </div>
+            <div>
+              <label htmlFor="category-additional-info" className="text-sm font-semibold text-ink">Additional Information</label>
+              <textarea
+                id="category-additional-info"
+                value={draft.additionalInfo}
+                onChange={(event) => update({ additionalInfo: event.target.value })}
+                rows={2}
+                maxLength={5000}
+                className={`mt-1.5 ${input}`}
+              />
+              <p className="mt-1 text-xs text-muted">Technical or other category information.</p>
+            </div>
+            <div>
+              <span className="text-sm font-semibold text-ink">Category Image</span>
+              <input
+                ref={fileInput}
+                id="category-image-file"
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                className="sr-only"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) void pickImage(file);
+                  event.target.value = "";
+                }}
+              />
+              <div
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  setDragging(true);
+                }}
+                onDragLeave={() => setDragging(false)}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  setDragging(false);
+                  const file = event.dataTransfer.files?.[0];
+                  if (file) void pickImage(file);
+                }}
+                className={`mt-1.5 rounded-xl border-2 border-dashed p-3 transition-colors ${
+                  dragging ? "border-primary bg-primary-soft/70" : "border-line bg-slate-50 hover:border-primary/40"
+                }`}
+              >
+                {previewSrc ? (
+                  <div className="flex flex-col items-center gap-2">
+                    {previewBroken ? (
+                      <div className="grid h-32 w-full max-w-sm place-items-center rounded-md bg-white text-xs font-medium text-muted">
+                        Preview unavailable
+                      </div>
+                    ) : (
+                      <img
+                        src={previewSrc}
+                        alt="Category image preview"
+                        onError={() => setPreviewErrorSrc(previewSrc)}
+                        className="h-32 w-full max-w-sm rounded-md bg-white object-contain p-2"
+                      />
+                    )}
+                    {imageName ? <p className="max-w-full truncate text-xs font-semibold text-ink">{imageName}</p> : null}
+                    <div className="flex flex-wrap justify-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => fileInput.current?.click()}
+                        disabled={Boolean(imageUpload)}
+                        className="inline-flex items-center justify-center gap-1.5 rounded-md border border-line bg-white px-3 py-1.5 text-xs font-semibold text-ink hover:border-primary/40 hover:text-primary disabled:opacity-60"
+                      >
+                        <CloudUpload aria-hidden="true" className="size-3.5" />
+                        Replace image
+                      </button>
+                      <button
+                        type="button"
+                        onClick={removeImage}
+                        disabled={Boolean(imageUpload)}
+                        className="inline-flex items-center justify-center gap-1.5 rounded-md border border-line bg-white px-3 py-1.5 text-xs font-semibold text-muted hover:text-red-600 disabled:opacity-60"
+                      >
+                        <X aria-hidden="true" className="size-3.5" />
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => fileInput.current?.click()}
+                    className="grid w-full place-items-center gap-1.5 px-3 py-5 text-center"
+                  >
+                    <CloudUpload aria-hidden="true" className="size-8 text-primary" />
+                    <span className="text-sm font-semibold text-ink">Drag and drop your category image here</span>
+                    <span className="text-xs text-muted">or browse files to upload</span>
+                    <span className="mt-1 inline-flex items-center justify-center rounded-md border border-line bg-white px-3 py-1.5 text-xs font-semibold text-primary">
+                      Browse Files
+                    </span>
+                  </button>
+                )}
+              </div>
+              {imageUpload ? (
+                <div className="mt-2" role="status" aria-live="polite">
+                  <div className="flex justify-between text-[11px] font-medium text-muted">
+                    <span>{imageUpload.label}…</span>
+                    <span>{imageUpload.progress}%</span>
+                  </div>
+                  <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-line">
+                    <div className="h-full rounded-full bg-primary transition-[width]" style={{ width: `${imageUpload.progress}%` }} />
+                  </div>
+                </div>
+              ) : null}
+              {imageMessage ? (
+                <p
+                  role={imageMessage.type === "error" ? "alert" : "status"}
+                  className={`mt-2 text-xs font-medium ${imageMessage.type === "error" ? "text-red-600" : "text-emerald-700"}`}
+                >
+                  {imageMessage.text}
+                </p>
+              ) : null}
+              <p className="mt-1 text-xs text-muted">PNG, JPG, JPEG or WebP up to 5 MB.</p>
             </div>
             <div className="flex gap-3">
               <div className="flex-1">
@@ -413,11 +770,11 @@ export default function CategoryManager({
           <div className="mt-4 flex gap-2">
             <button
               type="submit"
-              disabled={busy}
+              disabled={busy || Boolean(imageUpload)}
               className="inline-flex flex-1 items-center justify-center gap-2 rounded-md bg-primary px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-dark disabled:opacity-60"
             >
               {busy ? <Loader2 aria-hidden="true" className="size-4 animate-spin" /> : <Plus aria-hidden="true" className="size-4" />}
-              {editing ? "Save" : "Add"}
+              {editing ? "Save Category" : "Add Category"}
             </button>
             {editing ? (
               <button

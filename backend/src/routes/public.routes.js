@@ -2,7 +2,8 @@ import express from "express";
 import { createClient } from "@supabase/supabase-js";
 import { env } from "../config/env.js";
 import { getSupabaseAdmin, getSupabasePublic } from "../lib/supabase.js";
-import { hasDynamicReviewTabs, hasProductMigration, hasCategoryColumns } from "../lib/product-schema.js";
+import { hasDynamicReviewTabs, hasProductMigration, getCategoryColumns } from "../lib/product-schema.js";
+import { textValue } from "../lib/text.js";
 
 const router = express.Router();
 
@@ -158,13 +159,18 @@ router.get("/products", async (req, res) => {
     const migrated = await hasProductMigration();
     let query = getSupabasePublic()
       .from("products")
-      .select(`
-        slug, name, image_url, summary,
-        product_categories (slug, name)
-      `)
+      .select(
+        migrated
+          ? `slug, name, image_url, summary, display_order,
+        product_categories (slug, name)`
+          : `slug, name, image_url, summary,
+        product_categories (slug, name)`,
+      )
       .eq("status", "published");
     if (migrated) query = query.is("deleted_at", null);
-    const { data, error } = await query.order("name");
+    if (migrated) query = query.order("display_order").order("name");
+    else query = query.order("name");
+    const { data, error } = await query;
 
     if (error) throw error;
 
@@ -174,6 +180,7 @@ router.get("/products", async (req, res) => {
       image: p.image_url,
       summary: p.summary,
       category: p.product_categories ? { slug: p.product_categories.slug, name: p.product_categories.name } : null,
+      displayOrder: p.display_order ?? 0,
     }));
 
     res.json({ ok: true, products });
@@ -205,6 +212,7 @@ router.get("/products/:slug", async (req, res) => {
 
     const cataloguePath = documentStoragePath(data.catalogue_storage_path, data.catalogue_url);
     const datasheetPath = documentStoragePath(data.datasheet_storage_path, data.datasheet_url);
+    const modelPath = documentStoragePath(data.model_storage_path, data.model_url);
 
     const product = {
       id: data.id,
@@ -229,6 +237,9 @@ router.get("/products/:slug", async (req, res) => {
       catalogueAvailable: Boolean(cataloguePath),
       seoTitle: data.seo_title ?? null,
       seoDescription: data.seo_description ?? null,
+      modelUrl: modelPath ? toPublicStorageUrl(modelPath) : data.model_url ?? null,
+      modelStoragePath: modelPath,
+      modelName: data.model_name ?? null,
       updatedAt: data.updated_at,
       technical: await loadTechnical(data.id),
     };
@@ -321,25 +332,58 @@ router.get("/files/:key(*)", async (req, res) => {
 // Public: Get categories
 router.get("/categories", async (req, res) => {
   try {
-    const migrated = await hasCategoryColumns();
-    // Active categories only; a child is hidden while its parent is inactive.
+    const columns = await getCategoryColumns();
+    const fields = ["id", "slug", "name", "sort_order"];
+    for (const [column, field] of [
+      ["parent_id", "parent_id"],
+      ["is_active", "is_active"],
+      ["description", "description"],
+      ["level", "level"],
+      ["main_category_id", "main_category_id"],
+      ["content", "content"],
+      ["how_it_works", "how_it_works"],
+      ["applications", "applications"],
+      ["usage_info", "usage_info"],
+      ["industries", "industries"],
+      ["additional_info", "additional_info"],
+      ["category_image_url", "category_image_url"],
+    ]) {
+      if (columns[column]) fields.push(field);
+    }
+
     const { data, error } = await getSupabasePublic()
       .from("product_categories")
-      .select(migrated
-        ? "id, slug, name, parent_id, is_active, sort_order"
-        : "id, slug, name, sort_order")
+      .select(fields.join(", "))
       .order("sort_order")
       .order("name");
 
     if (error) throw error;
-    const categories = (data ?? [])
-      .filter((row) => {
-        if (!migrated) return true;
-        if (!row.is_active) return false;
-        return true;
-      })
-      .map((row) => ({ id: row.id, slug: row.slug, name: row.name, parentId: migrated ? row.parent_id ?? null : null }));
-    res.json({ ok: true, categories });
+
+    const categories = (data ?? []).map((row) => ({
+      id: row.id,
+      slug: row.slug,
+      name: row.name,
+      parentId: columns.parent_id ? row.parent_id ?? null : null,
+      isActive: columns.is_active ? row.is_active !== false : true,
+      sortOrder: row.sort_order ?? 0,
+      level: columns.level ? row.level ?? 1 : undefined,
+      mainCategoryId: columns.main_category_id ? row.main_category_id ?? null : null,
+      description: columns.description ? textValue(row.description) : "",
+      content: columns.content ? textValue(row.content) : "",
+      howItWorks: columns.how_it_works ? textValue(row.how_it_works) : "",
+      applications: columns.applications ? textValue(row.applications) : "",
+      usageInfo: columns.usage_info ? textValue(row.usage_info) : "",
+      industries: columns.industries ? textValue(row.industries) : "",
+      additionalInfo: columns.additional_info ? textValue(row.additional_info) : "",
+      categoryImageUrl: columns.category_image_url ? row.category_image_url ?? null : null,
+    }));
+
+    const activeIds = new Set(categories.filter((row) => row.isActive).map((row) => row.id));
+    const visibleCategories = categories.filter(
+      (row) => row.isActive && (!row.parentId || activeIds.has(row.parentId)),
+    );
+
+    res.json({ ok: true, categories: visibleCategories });
   } catch (err) {
     console.error("GET /api/categories error:", err);
     res.status(500).json({ ok: false, message: "Failed to fetch categories" });

@@ -67,6 +67,9 @@ export type ProductDetail = {
   galleryStoragePaths?: string[];
   catalogueStoragePath?: string | null;
   datasheetStoragePath?: string | null;
+  modelUrl?: string | null;
+  modelStoragePath?: string | null;
+  modelName?: string | null;
   technical?: TechnicalContent;
 };
 
@@ -81,6 +84,7 @@ export type ProductSummary = {
   image: string | null;
   summary?: string;
   category: { slug: string; name: string } | null;
+  displayOrder?: number;
   /** Set while browsing as a signed-in admin, so drafts can be previewed. */
   status?: "draft" | "published";
 };
@@ -101,6 +105,9 @@ export type AdminProduct = ProductDetail & {
   createdAt: string;
   categoryId: string | null;
   technical: TechnicalContent;
+  modelUrl?: string | null;
+  modelStoragePath?: string | null;
+  modelName?: string | null;
 };
 
 export type AdminCategory = {
@@ -113,6 +120,16 @@ export type AdminCategory = {
   sortOrder?: number;
   productCount: number;
   childIds?: string[];
+  level?: number;
+  mainCategoryId?: string | null;
+  content?: string;
+  howItWorks?: string;
+  applications?: string;
+  usageInfo?: string;
+  industries?: string;
+  additionalInfo?: string;
+  categoryImageUrl?: string;
+  categoryImageStoragePath?: string;
 };
 
 export type PublicCategory = {
@@ -120,6 +137,18 @@ export type PublicCategory = {
   slug: string;
   name: string;
   parentId: string | null;
+  level?: number;
+  mainCategoryId?: string | null;
+  isActive?: boolean;
+  sortOrder?: number;
+  description?: string;
+  content?: string;
+  howItWorks?: string;
+  applications?: string;
+  usageInfo?: string;
+  industries?: string;
+  additionalInfo?: string;
+  categoryImageUrl?: string;
 };
 
 const productsBySlug: Record<string, ProductDetail> = {

@@ -25,7 +25,7 @@ const schema = await readFile(path.join(process.cwd(), "lib/db/schema.sql"), "ut
 await pool.query(schema);
 console.log("Schema is up to date.");
 
-const { seedPumpsquareCategories } = await import("../lib/db/category-seed.ts");
+const { seedPumpsquareCategories } = await import("../lib/db/category-seed.mjs");
 const { seedCategories, seedProducts } = await import("../lib/products.ts");
 
 const client = await pool.connect();
@@ -40,8 +40,8 @@ try {
     for (const [index, category] of seedCategories.entries()) {
       if (categoryIds.has(category.slug)) continue;
       const { rows } = await client.query(
-        `insert into product_categories (id, name, slug, sort_order)
-         values ($1, $2, $3, $4)
+        `insert into product_categories (id, name, slug, sort_order, level)
+         values ($1, $2, $3, $4, 1)
          on conflict (slug) do update set name = excluded.name
          returning id`,
         [randomUUID(), category.name, category.slug, pumpsquareIds.size + index],

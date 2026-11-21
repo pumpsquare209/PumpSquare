@@ -9,6 +9,7 @@
     "lint": "eslint",
     "db:migrate": "node scripts/db-migrate.mjs",
     "db:seed": "node scripts/db-migrate.mjs --seed",
+    "db:migrate:hierarchy": "node scripts/db-migrate-hierarchy.mjs",
     "db:migrate:technical": "node scripts/db-migrate-technical.mjs",
     "db:migrate:dynamic-tabs": "node scripts/db-migrate-dynamic-tabs.mjs",
     "admin:create": "node scripts/admin-create.mjs",

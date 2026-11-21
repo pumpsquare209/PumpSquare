@@ -1,11 +1,11 @@
 // Drives headless Chrome over CDP: screenshots, LCP/CLS, network requests for 3D models.
-// Usage: node scripts/_tmp_cdp.mjs <outDir> <url> <width> <height> <label> [mobile|desktop]
+// Usage: node scripts/_tmp_cdp.mjs <outDir> <url> <width> <height> <label> [mobile|desktop] [open-products]
 import { spawn } from "node:child_process";
 import { writeFileSync, mkdirSync, existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
-const [outDir, url, wStr, hStr, label, mode = "desktop"] = process.argv.slice(2);
+const [outDir, url, wStr, hStr, label, mode = "desktop", action] = process.argv.slice(2);
 const width = Number(wStr), height = Number(hStr);
 mkdirSync(outDir, { recursive: true });
 
@@ -91,6 +91,17 @@ for (let y = 0; y < pageH.value; y += Math.floor(height * 0.8)) {
 await sleep(3500);
 await send("Runtime.evaluate", { expression: "window.scrollTo(0, 0)" });
 await sleep(1200);
+
+if (action === "open-products") {
+  if (mode === "mobile") {
+    await send("Runtime.evaluate", { expression: "document.querySelector('[aria-controls=\"mobile-navigation\"]')?.click()" });
+    await sleep(400);
+    await send("Runtime.evaluate", { expression: "document.querySelector('[aria-controls=\"mobile-products-dropdown\"]')?.click()" });
+  } else {
+    await send("Runtime.evaluate", { expression: "document.querySelector('[aria-controls=\"products-dropdown\"]')?.click()" });
+  }
+  await sleep(600);
+}
 
 const { result: metrics } = await send("Runtime.evaluate", { expression: "JSON.stringify(window.__metrics)", returnByValue: true });
 const { result: nav } = await send("Runtime.evaluate", {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useRef, useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -19,6 +19,7 @@ import {
   Trash2,
   Upload,
   X,
+  Box,
 } from "lucide-react";
 import type { AdminCategory, AdminProductStatus, TechnicalContent } from "@/lib/products";
 import { slugify } from "@/lib/slugify";
@@ -37,10 +38,10 @@ function technicalTabProblem(technical: EditorTechnical): string | null {
     const name = tab.label.trim();
     if (!name) return "Every technical tab needs a name.";
     const key = name.toLowerCase();
-    if (names.has(key)) return `Two technical tabs are named “${name}”. Tab names must be unique.`;
+    if (names.has(key)) return `Two technical tabs are named "${name}". Tab names must be unique.`;
     names.set(key, name);
     if (tab.enabled && !isTabLive(tab)) {
-      return `The “${name}” tab is set to show but has no content. Add a heading, bullet point or description, or untick “Show this tab on the website”.`;
+      return `The "${name}" tab is set to show but has no content. Add a heading, bullet point or description, or untick "Show this tab on the website".`;
     }
   }
   return null;
@@ -54,6 +55,8 @@ export type EditorProduct = {
   slug: string;
   name: string;
   categoryId: string | null;
+  mainCategoryId: string | null;
+  productTypeCategoryId: string | null;
   status: AdminProductStatus;
   summary: string;
   description: string;
@@ -63,6 +66,8 @@ export type EditorProduct = {
   datasheetName: string | null;
   catalogueUrl: string | null;
   catalogueName: string | null;
+  modelUrl: string | null;
+  modelName: string | null;
   series: string[];
   features: string[];
   applications: string[];
@@ -75,11 +80,12 @@ export type EditorProduct = {
   galleryStoragePaths?: string[];
   catalogueStoragePath?: string | null;
   datasheetStoragePath?: string | null;
+  modelStoragePath?: string | null;
   technical?: TechnicalContent;
 };
 
-type UploadKind = "image" | "document";
-type UploadSlot = "main" | "gallery" | "catalogue" | "datasheet";
+type UploadKind = "image" | "document" | "model";
+type UploadSlot = "main" | "gallery" | "catalogue" | "datasheet" | "model";
 
 type UploadResult = { url: string; path?: string; name?: string };
 
@@ -94,6 +100,8 @@ const EMPTY: EditorProduct = {
   slug: "",
   name: "",
   categoryId: null,
+  mainCategoryId: null,
+  productTypeCategoryId: null,
   status: "draft",
   summary: "",
   description: "",
@@ -103,6 +111,8 @@ const EMPTY: EditorProduct = {
   datasheetName: null,
   catalogueUrl: null,
   catalogueName: null,
+  modelUrl: null,
+  modelName: null,
   series: [],
   features: [],
   applications: [],
@@ -115,11 +125,14 @@ const EMPTY: EditorProduct = {
   galleryStoragePaths: [],
   catalogueStoragePath: null,
   datasheetStoragePath: null,
+  modelStoragePath: null,
 };
 
 const ACCEPTED_IMAGES = ["image/jpeg", "image/png", "image/webp"];
+const ACCEPTED_MODELS = ["model/gltf-binary", "application/octet-stream", ""];
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_PDF_BYTES = 10 * 1024 * 1024;
+const MAX_MODEL_BYTES = 25 * 1024 * 1024;
 
 function toSpecRows(record: Record<string, string[]>): SpecRow[] {
   return Object.entries(record).map(([key, values]) => ({
@@ -143,15 +156,19 @@ function lines(value: string) {
 const input =
   "mt-1.5 w-full rounded-md border border-line bg-white px-3 py-2.5 text-sm text-ink focus:border-primary focus:ring-2 focus:ring-primary/15 focus:outline-none";
 
-/** Active roots (ordered) with their active children, as selectable groups. */
-function categoryGroupsFrom(categories: AdminCategory[]) {
-  const active = categories.filter((category) => category.isActive !== false);
-  const ids = new Set(categories.map((category) => category.id));
-  const roots = active.filter((category) => !category.parentId || !ids.has(category.parentId));
-  return roots.map((root) => ({
-    ...root,
-    children: active.filter((category) => category.parentId === root.id),
-  }));
+/** Get main categories (level 0) */
+function getMainCategories(categories: AdminCategory[]): AdminCategory[] {
+  return categories
+    .filter((c) => c.level === 0 && c.isActive !== false)
+    .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.name.localeCompare(b.name));
+}
+
+/** Get product-type categories (level 1) for a given main category */
+function getProductTypeCategories(categories: AdminCategory[], mainCategoryId: string | null): AdminCategory[] {
+  if (!mainCategoryId) return [];
+  return categories
+    .filter((c) => c.level === 1 && c.mainCategoryId === mainCategoryId && c.isActive !== false)
+    .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.name.localeCompare(b.name));
 }
 
 export default function ProductEditor({
@@ -170,11 +187,22 @@ export default function ProductEditor({
   const [name, setName] = useState(start.name);
   const [slug, setSlug] = useState(start.slug);
   const [slugTouched, setSlugTouched] = useState(!isNew);
-  const [categoryId, setCategoryId] = useState(start.categoryId ?? "");
-  const categoryGroups = categoryGroupsFrom(categories);
-  const selectedCategory = categories.find((category) => category.id === categoryId);
-  const categoryActive = !selectedCategory || selectedCategory.isActive !== false;
-  const inactiveCategory = selectedCategory && selectedCategory.isActive === false ? selectedCategory : null;
+
+  // New category selection state
+  const [mainCategoryId, setMainCategoryId] = useState(start.mainCategoryId ?? "");
+  const [productTypeCategoryId, setProductTypeCategoryId] = useState(start.productTypeCategoryId ?? "");
+
+  // Derived categoryId for backward compatibility
+  const categoryId = productTypeCategoryId;
+
+  const mainCategories = getMainCategories(categories);
+  const productTypeCategories = getProductTypeCategories(categories, mainCategoryId);
+
+  const selectedMainCategory = categories.find((c) => c.id === mainCategoryId);
+  const selectedProductTypeCategory = categories.find((c) => c.id === productTypeCategoryId);
+  const categoryActive = !selectedProductTypeCategory || selectedProductTypeCategory.isActive !== false;
+  const inactiveCategory = selectedProductTypeCategory && selectedProductTypeCategory.isActive === false ? selectedProductTypeCategory : null;
+
   const [summary, setSummary] = useState(start.summary);
   const [description, setDescription] = useState(start.description);
   const [displayOrder, setDisplayOrder] = useState(String(start.displayOrder ?? 0));
@@ -184,6 +212,8 @@ export default function ProductEditor({
   const [datasheetName, setDatasheetName] = useState(start.datasheetName);
   const [catalogueUrl, setCatalogueUrl] = useState(start.catalogueUrl);
   const [catalogueName, setCatalogueName] = useState(start.catalogueName);
+  const [modelUrl, setModelUrl] = useState(start.modelUrl);
+  const [modelName, setModelName] = useState(start.modelName);
   const [series, setSeries] = useState(start.series.join("\n"));
   const [features, setFeatures] = useState(start.features.join("\n"));
   const [applications, setApplications] = useState(start.applications.join("\n"));
@@ -196,7 +226,8 @@ export default function ProductEditor({
   const [galleryPaths, setGalleryPaths] = useState<(string | null)[]>(start.galleryStoragePaths ?? []);
   const [cataloguePath, setCataloguePath] = useState<string | null>(start.catalogueStoragePath ?? null);
   const [datasheetPath, setDatasheetPath] = useState<string | null>(start.datasheetStoragePath ?? null);
-  // Files live under products/{id}/…, so the product must exist before uploading.
+  const [modelPath, setModelPath] = useState<string | null>(start.modelStoragePath ?? null);
+
   const productId = start.id;
 
   const [upload, setUpload] = useState<UploadState | null>(null);
@@ -206,6 +237,7 @@ export default function ProductEditor({
   const galleryInput = useRef<HTMLInputElement>(null);
   const datasheetInput = useRef<HTMLInputElement>(null);
   const catalogueInput = useRef<HTMLInputElement>(null);
+  const modelInput = useRef<HTMLInputElement>(null);
 
   const busy = saving !== null || upload !== null;
   const uploadsLocked = busy || !productId;
@@ -227,6 +259,12 @@ export default function ProductEditor({
     return null;
   }
 
+  function validateModel(file: File): string | null {
+    if (!file.name.toLowerCase().endsWith(".glb") || !ACCEPTED_MODELS.includes(file.type)) return "Only GLB 3D models can be uploaded.";
+    if (file.size > MAX_MODEL_BYTES) return "GLB models must be 25 MB or smaller.";
+    return null;
+  }
+
   function uploadFile(kind: UploadKind, file: File, slot: UploadSlot): Promise<UploadResult | null> {
     if (!productId) {
       setMessage({ type: "error", text: "Save this product as a draft before uploading files." });
@@ -235,14 +273,21 @@ export default function ProductEditor({
     const invalid =
       kind === "image"
         ? validateImage(file)
-        : validatePdf(file);
+        : kind === "document"
+        ? validatePdf(file)
+        : validateModel(file);
     if (invalid) {
       setMessage({ type: "error", text: invalid });
       return Promise.resolve(null);
     }
 
     setMessage(null);
-    const label = kind === "image" ? "Uploading image" : "Uploading PDF";
+    const label =
+      kind === "image"
+        ? "Uploading image"
+        : kind === "document"
+        ? "Uploading PDF"
+        : "Uploading 3D model";
     setUpload({ progress: 0, label, slot });
 
     return new Promise((resolve) => {
@@ -314,6 +359,15 @@ export default function ProductEditor({
     }
   }
 
+  async function setModel(file: File) {
+    const result = await uploadFile("model", file, "model");
+    if (result) {
+      setModelUrl(result.url);
+      setModelName(result.name ?? file.name);
+      setModelPath(result.path ?? null);
+    }
+  }
+
   function moveGallery(index: number, direction: -1 | 1) {
     setGalleryImages((current) => {
       const next = [...current];
@@ -331,11 +385,16 @@ export default function ProductEditor({
     });
   }
 
+  function removeGallery(index: number) {
+    setGalleryImages((current) => current.filter((_, i) => i !== index));
+    setGalleryPaths((current) => current.filter((_, i) => i !== index));
+  }
+
   function missingForPublish(): string[] {
     const missing: string[] = [];
     if (name.trim().length < 2) missing.push("Product name");
     if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) missing.push("Valid URL slug");
-    if (!categoryId) missing.push("Category");
+    if (!productTypeCategoryId) missing.push("Product-Type Category");
     else if (!categoryActive) missing.push("Active category (the selected one is deactivated)");
     if (!summary.trim()) missing.push("Short description");
     if (!imageUrl) missing.push("Main image");
@@ -374,11 +433,16 @@ export default function ProductEditor({
 
     setSaving(status);
     const order = Number.parseInt(displayOrder, 10);
+    const alignedGalleryPaths = galleryImages.every((_, index) => Boolean(galleryPaths[index]))
+      ? galleryImages.map((_, index) => galleryPaths[index] as string)
+      : [];
 
     const body = {
       name: name.trim(),
       slug,
       categoryId: categoryId || null,
+      mainCategoryId: mainCategoryId || null,
+      productTypeCategoryId: productTypeCategoryId || null,
       summary: summary.trim(),
       description: description.trim(),
       imageUrl,
@@ -387,6 +451,8 @@ export default function ProductEditor({
       datasheetName: datasheetUrl ? datasheetName : null,
       catalogueUrl,
       catalogueName: catalogueUrl ? catalogueName : null,
+      modelUrl,
+      modelName: modelUrl ? modelName : null,
       series: lines(series),
       features: lines(features),
       applications: lines(applications),
@@ -399,9 +465,10 @@ export default function ProductEditor({
       displayOrder: Number.isFinite(order) ? Math.max(0, order) : 0,
       status,
       imageStoragePath: imageUrl ? imagePath : null,
-      galleryStoragePaths: galleryImages.map((url, index) => (url ? galleryPaths[index] ?? null : null)).filter((path): path is string => Boolean(path)),
+      galleryStoragePaths: alignedGalleryPaths,
       catalogueStoragePath: catalogueUrl ? cataloguePath : null,
       datasheetStoragePath: datasheetUrl ? datasheetPath : null,
+      modelStoragePath: modelUrl ? modelPath : null,
       technical: toPayload(technical),
     };
 
@@ -435,11 +502,9 @@ export default function ProductEditor({
         text: published
           ? "Product published."
           : status === "published"
-            ? "Changes saved and published."
-            : "Draft saved.",
+          ? "Changes saved and published."
+          : "Draft saved.",
       });
-      // The editor rehydrates from the saved product, so a newly created product
-      // switches to its edit route; an existing one reloads in place.
       if (isNew) router.replace(`/admin/products/${id}/edit`);
       router.refresh();
     } catch (caught) {
@@ -450,6 +515,17 @@ export default function ProductEditor({
 
   const stats = technicalSummary();
   const previewHref = start.status === "published" ? `/products/${slug}` : null;
+
+  // Reset product type category when main category changes
+  useEffect(() => {
+    if (mainCategoryId && !productTypeCategories.some((c) => c.id === productTypeCategoryId)) {
+      // Use setTimeout to avoid synchronous setState in effect
+      const timer = setTimeout(() => {
+        setProductTypeCategoryId("");
+      }, 0);
+      return () => clearTimeout(timer);
+    }
+  }, [mainCategoryId, productTypeCategories, productTypeCategoryId]);
 
   return (
     <form
@@ -510,48 +586,78 @@ export default function ProductEditor({
                   maxLength={80}
                   className={input}
                 />
-                <p className="mt-1 text-xs text-muted">/products/{slug || "…"}</p>
+                <p className="mt-1 text-xs text-muted">/products/{slug || "..."}</p>
               </div>
+
+              {/* Main Category Dropdown */}
               <div>
-                <label htmlFor="product-category" className="text-sm font-semibold text-ink">
-                  Category <Required />
+                <label htmlFor="main-category" className="text-sm font-semibold text-ink">
+                  Main Category <Required />
                 </label>
                 <select
-                  id="product-category"
-                  value={categoryId}
-                  onChange={(event) => setCategoryId(event.target.value)}
-                  disabled={!categoriesError && categories.length === 0}
-                  aria-invalid={Boolean(categoriesError || (categoryId && !categoryActive))}
-                  aria-describedby="product-category-help"
+                  id="main-category"
+                  value={mainCategoryId}
+                  onChange={(event) => setMainCategoryId(event.target.value)}
+                  disabled={!categoriesError && mainCategories.length === 0}
+                  aria-invalid={Boolean(categoriesError || (mainCategoryId && !selectedMainCategory?.isActive))}
+                  aria-describedby="main-category-help"
                   className={input}
                 >
-                  <option value="">Select a category</option>
-                  {categoryGroups.map((group) => (
-                    <optgroup key={group.id} label={group.name}>
-                      <option value={group.id}>{group.children.length ? `${group.name} (general)` : group.name}</option>
-                      {group.children.map((category) => (
-                        <option key={category.id} value={category.id}>{category.name}</option>
-                      ))}
-                    </optgroup>
+                  <option value="">Select a main category</option>
+                  {mainCategories.map((category) => (
+                    <option key={category.id} value={category.id}>{category.name}</option>
                   ))}
-                  {inactiveCategory ? (
-                    <option value={inactiveCategory.id}>
-                      {inactiveCategory.name} (inactive){inactiveCategory.parentId && categories.find((category) => category.id === inactiveCategory.parentId) ? ` — under ${categories.find((category) => category.id === inactiveCategory.parentId)?.name}` : ""}
-                    </option>
-                  ) : null}
                 </select>
-                <p id="product-category-help" className="mt-1 text-xs">
+                <p id="main-category-help" className="mt-1 text-xs">
                   {categoriesError ? (
                     <span className="text-red-600">Categories could not be loaded. Reload the page and try again.</span>
-                  ) : categories.length === 0 ? (
-                    <span className="text-red-600">No categories exist yet. Add one under Categories before saving a product.</span>
-                  ) : inactiveCategory ? (
-                    <span className="text-red-600">This category is inactive. Choose an active category to publish.</span>
+                  ) : mainCategories.length === 0 ? (
+                    <span className="text-red-600">No main categories exist yet. Add categories under Categories before saving a product.</span>
                   ) : (
-                    <span className="text-muted">Use “(general)” for the parent itself, or pick a series underneath.</span>
+                    <span className="text-muted">Choose &ldquo;Pumps Manufactured by Us&rdquo; or &ldquo;Pumps We Trade&rdquo;.</span>
                   )}
                 </p>
               </div>
+
+              {/* Product-Type Category Dropdown */}
+              <div>
+                <label htmlFor="product-type-category" className="text-sm font-semibold text-ink">
+                  Product-Type Category <Required />
+                </label>
+                <select
+                  id="product-type-category"
+                  value={productTypeCategoryId}
+                  onChange={(event) => setProductTypeCategoryId(event.target.value)}
+                  disabled={!categoriesError && productTypeCategories.length === 0}
+                  aria-invalid={Boolean(categoriesError || (productTypeCategoryId && !categoryActive))}
+                  aria-describedby="product-type-category-help"
+                  className={input}
+                >
+                  <option value="">Select a product type</option>
+                  {productTypeCategories.map((category) => (
+                    <option key={category.id} value={category.id}>{category.name}</option>
+                  ))}
+                  {inactiveCategory ? (
+                    <option value={inactiveCategory.id}>
+                      {inactiveCategory.name} (inactive)
+                    </option>
+                  ) : null}
+                </select>
+                <p id="product-type-category-help" className="mt-1 text-xs">
+                  {categoriesError ? (
+                    <span className="text-red-600">Categories could not be loaded. Reload the page and try again.</span>
+                  ) : !mainCategoryId ? (
+                    <span className="text-muted">First select a main category above.</span>
+                  ) : productTypeCategories.length === 0 ? (
+                    <span className="text-red-600">No product types available for the selected main category. Add product-type categories under Categories.</span>
+                  ) : inactiveCategory ? (
+                    <span className="text-red-600">This category is inactive. Choose an active category to publish.</span>
+                  ) : (
+                    <span className="text-muted">Select the specific product type (e.g., External Gear Pumps).</span>
+                  )}
+                </p>
+              </div>
+
               <div className="sm:col-span-2">
                 <label htmlFor="product-summary" className="text-sm font-semibold text-ink">
                   Short description <Required />
@@ -591,7 +697,7 @@ export default function ProductEditor({
           <ExplanationEditor paragraphs={technical.paragraphs} onChange={(paragraphs) => setTechnical({ ...technical, paragraphs })} />
 
           <section className="rounded-xl border border-line bg-white p-5">
-            <h2 className="font-display text-base font-bold text-primary-deep">Series, features &amp; applications</h2>
+            <h2 className="font-display text-base font-bold text-primary-deep">Series, features & applications</h2>
             <p className="mt-1 text-xs text-muted">
               Quick lists for the catalogue card and product header. One item per line. Leave empty to hide the section.
             </p>
@@ -634,7 +740,7 @@ export default function ProductEditor({
         <div className="space-y-6">
           {!productId ? (
             <p className="rounded-xl border border-accent/40 bg-accent/10 px-4 py-3 text-xs font-medium text-primary-deep">
-              Save this product as a draft first — images and PDFs are uploaded into the product&rsquo;s own storage folder.
+              Save this product as a draft first &mdash; images, PDFs and 3D models are uploaded into the product&rsquo;s own storage folder.
             </p>
           ) : null}
           <section className="rounded-xl border border-line bg-white p-5">
@@ -680,6 +786,7 @@ export default function ProductEditor({
               <StatRow label="Explanation paragraphs" value={stats.paragraphs} />
               <StatRow label="Catalogue PDF" value={catalogueUrl ? "Uploaded" : "Not uploaded"} />
               <StatRow label="Datasheet PDF" value={datasheetUrl ? "Uploaded" : "Not uploaded"} />
+              <StatRow label="3D Model" value={modelUrl ? "Uploaded" : "Not uploaded"} />
             </dl>
           </section>
 
@@ -689,7 +796,6 @@ export default function ProductEditor({
             </h2>
             <div className="mt-3 overflow-hidden rounded-lg border border-dashed border-line bg-slate-50">
               {imageUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
                 <img src={imageUrl} alt="Main product" className="h-40 w-full object-contain p-2" />
               ) : (
                 <div className="grid h-40 place-items-center text-xs text-muted">No image yet</div>
@@ -740,7 +846,6 @@ export default function ProductEditor({
               <ul className="mt-3 grid grid-cols-3 gap-2">
                 {galleryImages.map((url, index) => (
                   <li key={`${url}-${index}`} className="group relative overflow-hidden rounded-md border border-line bg-slate-50">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={url} alt={`Additional image ${index + 1}`} className="h-20 w-full object-contain p-1" />
                     <div className="absolute inset-x-0 bottom-0 flex justify-center gap-0.5 bg-black/55 p-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
                       <button type="button" onClick={() => moveGallery(index, -1)} disabled={index === 0} className="rounded p-1 text-white disabled:opacity-30" aria-label={`Move image ${index + 1} left`}>
@@ -765,7 +870,7 @@ export default function ProductEditor({
                       </button>
                       <button
                         type="button"
-                        onClick={() => setGalleryImages((current) => current.filter((_, i) => i !== index))}
+                        onClick={() => removeGallery(index)}
                         className="rounded p-1 text-white hover:text-red-300"
                         aria-label={`Remove image ${index + 1}`}
                       >
@@ -801,9 +906,67 @@ export default function ProductEditor({
             </button>
           </section>
 
+          <section className="rounded-xl border border-line bg-white p-5">
+            <h2 className="font-display text-base font-bold text-primary-deep">
+              3D Model (GLB) <span className="text-xs font-normal text-muted">Optional</span>
+            </h2>
+            <p className="mt-1 text-xs text-muted">Upload a .glb file for interactive 3D viewing on the product detail page.</p>
+            <div className="mt-3 overflow-hidden rounded-lg border border-dashed border-line bg-slate-50">
+              {modelUrl ? (
+                <div className="h-40 w-full flex items-center justify-center bg-white p-2">
+                  <div className="text-center">
+                    <Box className="mx-auto size-10 text-primary" aria-hidden="true" />
+                    <p className="mt-2 text-sm font-medium text-ink">{modelName}</p>
+                    <p className="text-xs text-muted">3D model uploaded</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="grid h-40 place-items-center text-xs text-muted">No 3D model uploaded</div>
+              )}
+            </div>
+            {upload?.slot === "model" ? <UploadProgress upload={upload} /> : null}
+            <input
+              ref={modelInput}
+              type="file"
+              accept="model/gltf-binary,.glb"
+              className="sr-only"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) void setModel(file);
+                event.target.value = "";
+              }}
+            />
+            <div className="mt-3 flex gap-2">
+              <button
+                type="button"
+                onClick={() => modelInput.current?.click()}
+                disabled={uploadsLocked}
+                className="inline-flex flex-1 items-center justify-center gap-2 rounded-md border border-line px-3 py-2 text-xs font-semibold text-ink hover:border-primary/40 hover:text-primary disabled:opacity-60"
+              >
+                <Upload aria-hidden="true" className="size-3.5" />
+                {modelUrl ? "Replace model" : "Upload model"}
+              </button>
+              {modelUrl ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setModelUrl(null);
+                    setModelName(null);
+                    setModelPath(null);
+                  }}
+                  className="rounded-md border border-line p-2 text-muted hover:text-red-600"
+                  aria-label="Remove 3D model"
+                >
+                  <X aria-hidden="true" className="size-3.5" />
+                </button>
+              ) : null}
+            </div>
+            <p className="mt-2 text-xs text-muted">GLB format up to 25 MB. Enables interactive 3D viewer on product page.</p>
+          </section>
+
           <PdfCard
             title="Download Catalogue PDF"
-            description="Public visitors download this from the product page using the “Download Catalogue” button."
+            description='Public visitors download this from the product page using the "Download Catalogue" button.'
             slot="catalogue"
             url={catalogueUrl}
             fileName={catalogueName}

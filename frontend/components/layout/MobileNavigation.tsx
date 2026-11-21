@@ -1,23 +1,41 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ChevronDown, X } from "lucide-react";
-import { navLinks, productMenu } from "@/lib/content";
+import { ArrowUpRight, ChevronDown, Factory, PackageCheck, X } from "lucide-react";
+import { navLinks } from "@/lib/content";
+import {
+  getProductNavItems,
+  isProductNavItemActive,
+  isProductsSection,
+  type ProductNavItem,
+} from "@/lib/product-navigation";
+import type { PublicCategory } from "@/lib/products";
 import { cn } from "@/lib/utils";
 
 type MobileNavigationProps = {
+  categories: PublicCategory[];
   pathname: string;
   open: boolean;
   onClose: () => void;
 };
 
 export default function MobileNavigation({
+  categories,
   pathname,
   open,
   onClose,
 }: MobileNavigationProps) {
   const [productsOpen, setProductsOpen] = useState(false);
+  const productNavItems = getProductNavItems(categories);
+  const productsActive = isProductsSection(pathname);
+
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      if (!open) setProductsOpen(false);
+    }, 0);
+    return () => clearTimeout(timeout);
+  }, [open]);
 
   if (!open) return null;
 
@@ -53,54 +71,71 @@ export default function MobileNavigation({
               type="button"
               onClick={() => setProductsOpen((value) => !value)}
               aria-expanded={productsOpen}
-              className="flex w-full items-center justify-between rounded-md px-3 py-2.5 text-base font-medium text-white/90 transition-colors hover:bg-white/10 hover:text-white"
+              aria-controls="mobile-products-dropdown"
+              className={cn(
+                "flex w-full items-center justify-between rounded-md border-l-4 px-3 py-2.5 text-base font-medium transition-colors",
+                productsActive
+                  ? "border-accent bg-white/10 font-semibold text-white"
+                  : "border-transparent text-white/90 hover:bg-white/10 hover:text-white",
+              )}
             >
               Products
               <ChevronDown
                 aria-hidden="true"
                 className={cn(
-                  "size-4 text-white/70 transition-transform",
+                  "size-4 text-white/70 transition-transform duration-200",
                   productsOpen && "rotate-180 text-accent",
                 )}
               />
             </button>
-            {productsOpen ? (
-              <div className="mt-1 space-y-4 border-l-2 border-white/20 pl-4">
-                {productMenu.map((group) => (
-                  <div key={group.heading}>
-                    <p className="px-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-silver">
-                      {group.heading}
-                    </p>
-                    <ul className="mt-1">
-                      {group.items.map((item) => {
-                        const external = /^https?:\/\//.test(item.href);
-                        const className =
-                          "block rounded-md px-3 py-2 text-sm font-medium text-white/90 transition-colors hover:bg-white/10 hover:text-white";
-                        return (
-                          <li key={item.label}>
-                            {external ? (
-                              <a
-                                href={item.href}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                onClick={onClose}
-                                className={className}
-                              >
-                                {item.label}
-                              </a>
-                            ) : (
-                              <Link href={item.href} onClick={onClose} className={className}>
-                                {item.label}
-                              </Link>
-                            )}
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  </div>
-                ))}
+            <div
+              id="mobile-products-dropdown"
+              aria-hidden={!productsOpen}
+              className={cn(
+                "grid transition-[grid-template-rows,opacity] duration-200 ease-out",
+                productsOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
+              )}
+            >
+              <div className="overflow-hidden">
+                <ul className="mt-2 space-y-2 pl-2">
+                  {productNavItems.map((item) => {
+                    const active = isProductNavItemActive(item, pathname);
+                    return (
+                      <li key={item.slug}>
+                        <Link
+                          href={item.href}
+                          onClick={onClose}
+                          aria-current={active ? "page" : undefined}
+                          tabIndex={productsOpen ? 0 : -1}
+                          className={cn(
+                            "group flex gap-3 rounded-lg border border-white/10 p-3 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+                            active
+                              ? "border-accent/60 bg-white/10"
+                              : "bg-white/5 hover:border-white/25 hover:bg-white/10",
+                          )}
+                        >
+                          <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-white/10 text-white transition-colors group-hover:bg-accent group-hover:text-primary-deep">
+                            <MobileProductNavIcon icon={item.icon} />
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-sm font-semibold text-white">
+                              {item.label}
+                            </span>
+                            <span className="mt-1 block text-xs leading-relaxed text-white/70">
+                              {item.description}
+                            </span>
+                          </span>
+                          <ArrowUpRight
+                            aria-hidden="true"
+                            className="mt-0.5 size-4 shrink-0 text-white/60 transition-colors group-hover:text-accent"
+                          />
+                        </Link>
+                      </li>
+                    );
+                  })}
+                </ul>
               </div>
-            ) : null}
+            </div>
           </li>
         </ul>
 
@@ -142,5 +177,14 @@ export function MobileMenuButton({
         </span>
       )}
     </button>
+  );
+}
+
+function MobileProductNavIcon({ icon }: { icon: ProductNavItem["icon"] }) {
+  const className = "size-4";
+  return icon === "factory" ? (
+    <Factory aria-hidden="true" className={className} />
+  ) : (
+    <PackageCheck aria-hidden="true" className={className} />
   );
 }

@@ -20,11 +20,28 @@ export default async function EditProductPage({ params }: { params: Promise<{ id
   const [product, categoryResult] = await Promise.all([getAdminProductById(id), getAdminCategoriesSafe()]);
   if (!product) notFound();
 
+  // Find main category from product's category
+  let mainCategoryId = product.categoryId;
+  let productTypeCategoryId = product.categoryId;
+
+  if (product.categoryId) {
+    const productTypeCat = categoryResult.categories.find((c) => c.id === product.categoryId);
+    if (productTypeCat?.level === 1 && productTypeCat.mainCategoryId) {
+      mainCategoryId = productTypeCat.mainCategoryId;
+      productTypeCategoryId = product.categoryId;
+    } else if (productTypeCat?.level === 0) {
+      mainCategoryId = product.categoryId;
+      productTypeCategoryId = "";
+    }
+  }
+
   const initial: EditorProduct = {
     id: product.id,
     slug: product.slug,
     name: product.name,
     categoryId: product.categoryId,
+    mainCategoryId,
+    productTypeCategoryId,
     status: product.status,
     summary: product.summary,
     description: product.description,
@@ -34,6 +51,8 @@ export default async function EditProductPage({ params }: { params: Promise<{ id
     datasheetName: product.datasheetName,
     catalogueUrl: product.catalogueUrl ?? null,
     catalogueName: product.catalogueName ?? null,
+    modelUrl: product.modelUrl ?? null,
+    modelName: product.modelName ?? null,
     series: product.series,
     features: product.features,
     applications: product.applications,
@@ -46,6 +65,7 @@ export default async function EditProductPage({ params }: { params: Promise<{ id
     galleryStoragePaths: product.galleryStoragePaths ?? [],
     catalogueStoragePath: product.catalogueStoragePath ?? null,
     datasheetStoragePath: product.datasheetStoragePath ?? null,
+    modelStoragePath: product.modelStoragePath ?? null,
     technical: product.technical,
   };
 
