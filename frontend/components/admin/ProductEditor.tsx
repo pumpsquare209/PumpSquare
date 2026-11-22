@@ -21,12 +21,13 @@ import {
   X,
   Box,
 } from "lucide-react";
-import type { AdminCategory, AdminProductStatus, TechnicalContent } from "@/lib/products";
+import type { AdminCategory, AdminProductStatus, TechnicalContent, PerformanceMetric } from "@/lib/products";
 import { slugify } from "@/lib/slugify";
 import { fileProxyUrl } from "@/lib/upload-url";
 import { cn } from "@/lib/utils";
 import ReviewTabsEditor from "./ReviewTabsEditor";
 import PerformanceTableEditor from "./PerformanceTableEditor";
+import PerformanceMetricsEditor from "./PerformanceMetricsEditor";
 import MaterialsTableEditor from "./MaterialsTableEditor";
 import ExplanationEditor from "./ExplanationEditor";
 import { isTabLive, normalizeTechnical, toPayload, type EditorTechnical } from "./editor-types";
@@ -82,6 +83,7 @@ export type EditorProduct = {
   datasheetStoragePath?: string | null;
   modelStoragePath?: string | null;
   technical?: TechnicalContent;
+  performanceMetrics?: PerformanceMetric[];
 };
 
 type UploadKind = "image" | "document" | "model";
@@ -126,6 +128,8 @@ const EMPTY: EditorProduct = {
   catalogueStoragePath: null,
   datasheetStoragePath: null,
   modelStoragePath: null,
+  technical: undefined,
+  performanceMetrics: [],
 };
 
 const ACCEPTED_IMAGES = ["image/jpeg", "image/png", "image/webp"];
@@ -222,6 +226,7 @@ export default function ProductEditor({
   const [seoTitle, setSeoTitle] = useState(start.seoTitle ?? "");
   const [seoDescription, setSeoDescription] = useState(start.seoDescription ?? "");
   const [technical, setTechnical] = useState<EditorTechnical>(() => normalizeTechnical(start.technical));
+  const [performanceMetrics, setPerformanceMetrics] = useState<PerformanceMetric[]>(start.performanceMetrics ?? []);
   const [imagePath, setImagePath] = useState<string | null>(start.imageStoragePath ?? null);
   const [galleryPaths, setGalleryPaths] = useState<(string | null)[]>(start.galleryStoragePaths ?? []);
   const [cataloguePath, setCataloguePath] = useState<string | null>(start.catalogueStoragePath ?? null);
@@ -470,6 +475,15 @@ export default function ProductEditor({
       datasheetStoragePath: datasheetUrl ? datasheetPath : null,
       modelStoragePath: modelUrl ? modelPath : null,
       technical: toPayload(technical),
+      performanceMetrics: performanceMetrics
+        .filter((m) => m.metricName.trim() && m.metricValue.trim())
+        .map((m, i) => ({
+          id: m.id,
+          metricName: m.metricName.trim(),
+          metricValue: m.metricValue.trim(),
+          unit: (m.unit ?? "").trim() || null,
+          displayOrder: i,
+        })),
     };
 
     try {
@@ -695,6 +709,10 @@ export default function ProductEditor({
           />
           <MaterialsTableEditor rows={technical.materials} onChange={(rows) => setTechnical({ ...technical, materials: rows })} />
           <ExplanationEditor paragraphs={technical.paragraphs} onChange={(paragraphs) => setTechnical({ ...technical, paragraphs })} />
+          <PerformanceMetricsEditor
+            metrics={performanceMetrics}
+            onChange={setPerformanceMetrics}
+          />
 
           <section className="rounded-xl border border-line bg-white p-5">
             <h2 className="font-display text-base font-bold text-primary-deep">Series, features & applications</h2>

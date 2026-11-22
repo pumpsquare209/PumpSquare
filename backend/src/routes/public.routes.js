@@ -61,6 +61,7 @@ const emptyTechnical = () => ({
   performance: { columns: [], rows: [] },
   materials: [],
   paragraphs: [],
+  performanceMetrics: [],
 });
 
 /**
@@ -76,17 +77,22 @@ async function loadTechnical(productId) {
     ? "tab_key, label, is_custom, sort_order, enabled, heading, intro"
     : "tab_key, enabled, heading, intro";
 
-  const [tabs, features, columns, rows, materials, paragraphs] = await Promise.all([
+  const [tabs, features, columns, rows, materials, paragraphs, metrics] = await Promise.all([
     supabase.from("product_review_tabs").select(tabColumns).eq("product_id", productId),
     supabase.from("product_review_features").select("tab_key, label, detail").eq("product_id", productId).order("sort_order"),
     supabase.from("product_performance_columns").select("id, name, unit").eq("product_id", productId).order("sort_order"),
     supabase.from("product_performance_rows").select("id").eq("product_id", productId).order("sort_order"),
     supabase.from("product_materials").select("id, component, material, specification").eq("product_id", productId).order("sort_order"),
     supabase.from("product_explanation_paragraphs").select("id, html").eq("product_id", productId).order("sort_order"),
+    supabase
+      .from("product_performance_metrics")
+      .select("id, metric_name, metric_value, unit, display_order")
+      .eq("product_id", productId)
+      .order("display_order"),
   ]);
 
   if (tabs.error && tabs.error.code === "42P01") return technical;
-  for (const result of [tabs, features, columns, rows, materials, paragraphs]) {
+  for (const result of [tabs, features, columns, rows, materials, paragraphs, metrics]) {
     if (result.error && result.error.code !== "42P01") throw result.error;
   }
 
@@ -149,6 +155,16 @@ async function loadTechnical(productId) {
     specification: item.specification ?? "",
   }));
   technical.paragraphs = (paragraphs.data ?? []).map((p) => ({ id: p.id, html: p.html }));
+  technical.performanceMetrics = (metrics.data ?? []).map((m) => ({
+    id: m.id,
+    productId,
+    metricName: m.metric_name,
+    metricValue: m.metric_value,
+    unit: m.unit,
+    displayOrder: m.display_order,
+    createdAt: "",
+    updatedAt: "",
+  }));
 
   return technical;
 }

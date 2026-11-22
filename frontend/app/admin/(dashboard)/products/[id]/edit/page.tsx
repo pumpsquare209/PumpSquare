@@ -67,6 +67,7 @@ export default async function EditProductPage({ params }: { params: Promise<{ id
     datasheetStoragePath: product.datasheetStoragePath ?? null,
     modelStoragePath: product.modelStoragePath ?? null,
     technical: product.technical,
+    performanceMetrics: product.technical?.performanceMetrics ?? [],
   };
 
   return (

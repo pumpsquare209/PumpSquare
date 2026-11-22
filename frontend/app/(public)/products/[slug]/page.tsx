@@ -385,6 +385,34 @@ async function ProductDetail({ slug }: { slug: string }) {
 
           <TechnicalTabsWrapper technical={product.technical} />
 
+          {product.technical?.performanceMetrics?.length ? (
+            <>
+              <div className="mt-10">
+                <h2 className="font-display text-lg font-bold text-primary-deep">Performance Metrics</h2>
+                <div className="mt-4 overflow-hidden rounded-xl border border-line bg-white">
+                  <table className="w-full border-collapse">
+                    <thead>
+                      <tr className="bg-primary-soft/60">
+                        <th scope="col" className="px-5 py-3 text-left text-xs font-bold text-primary-deep">Metric Name</th>
+                        <th scope="col" className="px-5 py-3 text-left text-xs font-bold text-primary-deep">Value</th>
+                        <th scope="col" className="px-5 py-3 text-left text-xs font-bold text-primary-deep">Unit</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-line">
+                      {product.technical.performanceMetrics.map((metric) => (
+                        <tr key={metric.id} className="transition-colors hover:bg-primary-soft/30">
+                          <td className="px-5 py-3 font-medium text-muted">{metric.metricName}</td>
+                          <td className="px-5 py-3 text-ink">{metric.metricValue}</td>
+                          <td className="px-5 py-3 text-muted">{metric.unit || "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          ) : null}
+
           <div className="mt-12 rounded-2xl border border-line bg-primary p-6 sm:p-8">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div>

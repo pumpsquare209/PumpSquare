@@ -271,7 +271,7 @@ async function loadTechnical(supabase, productId) {
   const tabColumns = dynamicTabs
     ? "tab_key, label, is_custom, sort_order, enabled, heading, intro"
     : "tab_key, enabled, heading, intro";
-  const [tabs, features, columns, rows, materials, paragraphs] = await Promise.all([
+  const [tabs, features, columns, rows, materials, paragraphs, metrics] = await Promise.all([
     supabase.from("product_review_tabs").select(tabColumns).eq("product_id", productId),
     supabase
       .from("product_review_features")
@@ -294,11 +294,16 @@ async function loadTechnical(supabase, productId) {
       .select("id, html, sort_order")
       .eq("product_id", productId)
       .order("sort_order"),
+    supabase
+      .from("product_performance_metrics")
+      .select("id, metric_name, metric_value, unit, display_order, created_at, updated_at")
+      .eq("product_id", productId)
+      .order("display_order"),
   ]);
 
   // If technical tables don't exist (migration not run), return empty technical
   if (tabs.error && tabs.error.code === "42P01") return empty;
-  for (const result of [tabs, features, columns, rows, materials, paragraphs]) {
+  for (const result of [tabs, features, columns, rows, materials, paragraphs, metrics]) {
     if (result.error && result.error.code !== "42P01") throw result.error;
   }
 
@@ -339,6 +344,16 @@ async function loadTechnical(supabase, productId) {
     specification: item.specification ?? "",
   }));
   technical.paragraphs = (paragraphs.data ?? []).map((p) => ({ id: p.id, html: p.html }));
+  technical.performanceMetrics = (metrics.data ?? []).map((m) => ({
+    id: m.id,
+    productId,
+    metricName: m.metric_name,
+    metricValue: m.metric_value,
+    unit: m.unit,
+    displayOrder: m.display_order,
+    createdAt: m.created_at,
+    updatedAt: m.updated_at,
+  }));
 
   return technical;
 }
@@ -497,6 +512,30 @@ async function replaceTechnical(supabase, productId, input) {
   if (paragraphRows.length) {
     const { error } = await supabase.from("product_explanation_paragraphs").insert(paragraphRows);
     if (error) throw error;
+  }
+
+  // Save performance metrics
+  if (technical.performanceMetrics?.length) {
+    // Delete existing metrics for this product
+    const { error: deleteError } = await supabase
+      .from("product_performance_metrics")
+      .delete()
+      .eq("product_id", productId);
+    if (deleteError && deleteError.code !== "42P01") throw deleteError;
+
+    // Insert new metrics
+    const metricRows = technical.performanceMetrics.map((m, index) => ({
+      id: ids(m.id),
+      product_id: productId,
+      metric_name: m.metricName,
+      metric_value: m.metricValue,
+      unit: m.unit,
+      display_order: index,
+    }));
+    if (metricRows.length) {
+      const { error } = await supabase.from("product_performance_metrics").insert(metricRows);
+      if (error && error.code !== "42P01") throw error;
+    }
   }
 }
 
@@ -733,6 +772,7 @@ function emptyTechnical() {
     performance: { columns: [], rows: [] },
     materials: [],
     paragraphs: [],
+    performanceMetrics: [],
   };
 }
 
@@ -790,6 +830,14 @@ const pairEntrySchema = z.object({
   value: z.string().trim().min(1).max(300),
 });
 
+const performanceMetricEntrySchema = z.object({
+  id: z.string().min(1).max(64).optional(),
+  metricName: z.string().trim().min(1).max(120),
+  metricValue: z.string().trim().min(1).max(120),
+  unit: z.string().trim().max(80).optional().nullable(),
+  displayOrder: z.number().int().min(0).optional(),
+});
+
 const productInputSchema = z.object({
   name: z.string().trim().min(2).max(120),
   slug: slugSchema,
@@ -821,6 +869,7 @@ const productInputSchema = z.object({
   datasheetStoragePath: storagePathSchema.nullable().optional(),
   modelStoragePath: storagePathSchema.nullable().optional(),
   technical: technicalSchema.optional(),
+  performanceMetrics: z.array(performanceMetricEntrySchema).max(30).optional(),
 });
 
 // A product may only be published once it has everything the public page needs.

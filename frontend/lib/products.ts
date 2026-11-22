@@ -34,11 +34,23 @@ export type PerformanceRow = { id: string; cells: Record<string, string> };
 
 export type MaterialRow = { id: string; component: string; material: string; specification: string };
 
+export type PerformanceMetric = {
+  id: string;
+  productId: string;
+  metricName: string;
+  metricValue: string;
+  unit: string | null;
+  displayOrder: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type TechnicalContent = {
   tabs: ReviewTab[];
   performance: { columns: PerformanceColumn[]; rows: PerformanceRow[] };
   materials: MaterialRow[];
   paragraphs: { id: string; html: string }[];
+  performanceMetrics?: PerformanceMetric[];
 };
 
 export type ProductDetail = {
