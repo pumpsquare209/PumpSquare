@@ -1,10 +1,11 @@
 import { Suspense, type ReactNode } from "react";
-import Image from "next/image";
 import Link from "next/link";
-import type { Metadata } from "next";
+import { ArrowRight } from "lucide-react";
 import PageHero from "@/components/ui/PageHero";
-import { getCategoriesResult } from "@/lib/products-server";
+import { getCategoriesResult, getPublishedProductsResult } from "@/lib/products-server";
+import CategoryProductImage from "@/components/products/CategoryProductImage";
 import type { PublicCategory } from "@/lib/products";
+import type { Metadata } from "next";
 
 export const metadata: Metadata = {
   title: "Products",
@@ -12,177 +13,124 @@ export const metadata: Metadata = {
     "Browse Pumpsquare Systems LLP pumps and process equipment — progressive cavity, screw, gear and lobe pumps for industrial applications.",
 };
 
-type CardPresentation = {
-  title: string;
-  description: string;
-  imageSrc?: string;
-  imageAlt: string;
-  useCategoryImage?: boolean;
-  panelBackground: string;
-  clipPath: string;
-  badge: "gear" | "seim";
-  order: number;
+const LOCAL_CATEGORY_IMAGES: Record<string, string> = {
+  "external-gear-pumps": "/images/products/external_gear_pumps_small.jpg",
+  "external-lobe-pumps": "/images/products/external_lobe_pumps_small.jpg",
+  "gerotor-pumps": "/images/products/gerotor_pumps_small.jpg",
+  "internal-gear-pumps": "/images/products/internal_gear_pumps_small.jpg",
+  "progressive-cavity-pumps": "/images/products/progressive_cavity_pumps_small.jpg",
+  "shuttle-block-pumps": "/images/products/shuttle_block_pumps_small.jpg",
+  "triple-screw-pumps": "/images/products/triple_screw_pumps_small.jpg",
+  "trochoidal-gear-pumps": "/images/products/trochoidal_gear_pumps_small.jpg",
+  "twin-screw-pumps": "/images/products/twin_screw_pumps_small.jpg",
 };
 
-const CARD_PRESENTATION: Record<string, CardPresentation> = {
-  "pumps-manufactured-by-us": {
-    title: "Pumps Manufactured by Us",
-    description:
-      "Positive displacement pumps engineered and manufactured by Pumpsquare for industrial, chemical, food and oil & gas duties.",
-    imageSrc: "/images/Industrial_Blue_Pump_Assembly-removebg-preview.png",
-    imageAlt: "Pumpsquare manufactured industrial blue pump",
-    panelBackground: "linear-gradient(135deg,#EAF6FF 0%,#CDE7FA 58%,#A9D4F0 100%)",
-    clipPath: "polygon(28% 0,100% 0,100% 100%,0 100%)",
-    badge: "gear",
-    order: 0,
-  },
-  "pumps-traded-by-us": {
-    title: "Pumps Traded by Us (SEIM Pumps)",
-    description:
-      "Genuine SEIM positive displacement pumps and associated equipment supplied through our trading partnership.",
-    imageAlt: "SEIM positive displacement pump supplied by Pumpsquare",
-    useCategoryImage: true,
-    panelBackground: "linear-gradient(135deg,#0B557F 0%,#003B5C 62%,#002A43 100%)",
-    clipPath: "polygon(22% 0,100% 0,100% 100%,0 100%)",
-    badge: "seim",
-    order: 1,
-  },
+const MAIN_CATEGORY_SLUGS = ["pumps-manufactured-by-us", "pumps-traded-by-us"] as const;
+
+type ProductTypeCategory = PublicCategory & {
+  productCount: number;
+  imageUrl: string | null;
 };
 
-function SettingsIcon() {
-  return (
-    <svg
-      className="h-6 w-6"
-      fill="none"
-      stroke="currentColor"
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth={1.7}
-        d="M10.3 3.9a1 1 0 011.4 0l.6.6a1 1 0 001.4 0l.7-.3a1 1 0 011.3.4l.5.9a1 1 0 001.2.5l.8-.2a1 1 0 011.2.7l.3.8a1 1 0 001 .7h1a1 1 0 011 1v1a1 1 0 01-.7 1l-.8.2a1 1 0 00-.5 1.2l.4.9a1 1 0 01-.4 1.3l-.7.6a1 1 0 000 1.4l.6.6a1 1 0 010 1.4l-.9.9a1 1 0 01-1.3.4l-.8-.3a1 1 0 00-1.2.5l-.5.9a1 1 0 01-1 .7h-1a1 1 0 01-1-1v-.8a1 1 0 00-.7-1l-.9-.3a1 1 0 00-1.2.5l-.6.8a1 1 0 01-1.4 0l-.9-.9a1 1 0 01-.4-1.3l.3-.8a1 1 0 00-.5-1.2l-.9-.5a1 1 0 01-.7-1v-1a1 1 0 011-1h.8a1 1 0 001-.7l.3-.9a1 1 0 00-.5-1.2l-.8-.6a1 1 0 010-1.4l.9-.9a1 1 0 011.3-.4l.8.3a1 1 0 001.2-.5l.5-.9a1 1 0 011-.7h1z"
-      />
-      <circle cx="12" cy="12" r="3" strokeWidth={1.7} />
-    </svg>
-  );
+async function getProductsPageData() {
+  const [categoryResult, productResult] = await Promise.all([
+    getCategoriesResult(),
+    getPublishedProductsResult(),
+  ]);
+
+  const categories = categoryResult.categories;
+  const categoryError = categoryResult.error;
+  const productError = productResult.error;
+
+  const mainCategories = categories
+    .filter(
+      (category) =>
+        category.level === 0 &&
+        category.isActive !== false &&
+        MAIN_CATEGORY_SLUGS.includes(category.slug as (typeof MAIN_CATEGORY_SLUGS)[number]),
+    )
+    .sort((a, b) => MAIN_CATEGORY_SLUGS.indexOf(a.slug as (typeof MAIN_CATEGORY_SLUGS)[number]) - MAIN_CATEGORY_SLUGS.indexOf(b.slug as (typeof MAIN_CATEGORY_SLUGS)[number]));
+
+  const productCounts = new Map<string, number>();
+  const productImages = new Map<string, string>();
+  for (const product of productResult.products) {
+    if (!product.category?.slug) continue;
+    productCounts.set(product.category.slug, (productCounts.get(product.category.slug) ?? 0) + 1);
+    if (product.image && !productImages.has(product.category.slug)) {
+      productImages.set(product.category.slug, product.image);
+    }
+  }
+
+  const mainCategoryData = mainCategories.map((mainCategory) => {
+    const productTypeCategories = categories
+      .filter(
+        (category) =>
+          category.level === 1 &&
+          category.mainCategoryId === mainCategory.id &&
+          category.isActive !== false,
+      )
+      .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.name.localeCompare(b.name))
+      .map((category) => ({
+        ...category,
+        productCount: productCounts.get(category.slug) ?? 0,
+        imageUrl:
+          category.categoryImageUrl ||
+          productImages.get(category.slug) ||
+          LOCAL_CATEGORY_IMAGES[category.slug] ||
+          null,
+      }));
+
+    return {
+      mainCategory,
+      productTypeCategories,
+    };
+  });
+
+  return {
+    mainCategoryData,
+    categoryError,
+    productError,
+  };
 }
 
-function ArrowIcon() {
+function ProductTypeCategoryCard({ category }: { category: ProductTypeCategory }) {
   return (
-    <svg
-      className="h-4 w-4 transition-transform duration-300 group-hover:translate-x-0.5"
-      fill="none"
-      stroke="currentColor"
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth={2}
-        d="M5 12h14m-6-6l6 6-6 6"
-      />
-    </svg>
-  );
-}
-
-function MainCategoryCard({ category }: { category: PublicCategory }) {
-  const presentation = CARD_PRESENTATION[category.slug];
-  const imageSrc = presentation.useCategoryImage
-    ? category.categoryImageUrl || "/images/pumpsquare-equipment-clean.png"
-    : presentation.imageSrc || "/images/Industrial_Blue_Pump_Assembly-removebg-preview.png";
-
-  return (
-    <Link
-      href={`/products/category/${category.slug}`}
-      aria-label={`Explore ${presentation.title}`}
-      className="group relative isolate flex h-full min-h-[360px] flex-col overflow-hidden rounded-[22px] border border-[#D8E7F2] bg-gradient-to-br from-white via-[#FAFDFF] to-[#EEF7FD] shadow-[0_12px_34px_rgba(0,59,92,0.08)] transition-all duration-300 hover:-translate-y-1 hover:border-[#BDD8EB] hover:shadow-[0_22px_48px_rgba(0,59,92,0.18)] md:grid md:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]"
-    >
-      <div
-        aria-hidden="true"
-        className="absolute inset-x-0 bottom-0 top-auto h-[52%] w-full md:inset-y-0 md:left-auto md:right-0 md:h-auto md:w-[58%]"
-        style={{
-          backgroundImage: presentation.panelBackground,
-          clipPath: presentation.clipPath,
-        }}
-      />
-
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute -bottom-16 -right-16 z-[1] h-44 w-44 rounded-full border-[16px] border-accent/90 sm:h-48 sm:w-48 lg:h-52 lg:w-52 lg:border-[18px]"
-      />
-
-      <div className="relative z-20 flex flex-1 flex-col p-7 sm:p-8 md:p-6 lg:p-9">
-        {presentation.badge === "seim" ? (
-          <div className="relative flex h-12 w-14 items-center justify-center rounded-xl border border-line bg-white shadow-sm">
-            <Image
-              src="/images/seim_logo.png"
-              alt="SEIM"
-              fill
-              sizes="56px"
-              className="object-contain p-1.5"
-            />
-          </div>
-        ) : (
-          <div className="grid h-12 w-12 place-items-center rounded-xl bg-[#E4F2FB] text-primary shadow-sm">
-            <SettingsIcon />
-          </div>
-        )}
-
-        <h3 className="mt-5 max-w-md font-display text-[21px] font-extrabold leading-[1.16] tracking-tight text-primary-deep sm:text-[22px] lg:text-[26px]">
-          {presentation.title}
-        </h3>
-        <p className="mt-3 max-w-md text-[14px] leading-[1.65] text-[#5F7180] sm:text-[15px]">
-          {presentation.description}
-        </p>
-
-        <span className="mt-auto inline-flex w-fit items-center gap-2 rounded-full bg-accent px-5 py-2.5 text-sm font-bold text-primary-deep shadow-[0_8px_18px_rgba(255,209,0,0.35)] transition-colors duration-300 group-hover:bg-accent-dark">
-          Explore Products
-          <ArrowIcon />
-        </span>
-      </div>
-
-      <div className="pointer-events-none relative z-10 h-52 w-full md:h-full">
-        <div className="absolute inset-x-0 bottom-0 top-0 flex items-end justify-center">
-          <div className="relative h-[92%] w-[78%] md:h-[86%] md:w-[92%] lg:w-[94%]">
-            <Image
-              src={imageSrc}
-              alt={presentation.imageAlt}
-              fill
-              sizes="(max-width: 1023px) 100vw, 50vw"
-              className={`object-contain drop-shadow-[0_18px_22px_rgba(0,59,92,0.22)] transition-transform duration-500 group-hover:-translate-y-1 group-hover:scale-[1.04] ${
-                presentation.badge === "seim" ? "object-bottom" : "object-center"
-              }`}
-            />
+    <li className="h-full">
+      <Link
+        href={`/products/type/${category.slug}`}
+        prefetch
+        className="group flex h-full flex-col overflow-hidden rounded-2xl border border-line bg-white shadow-[0_1px_3px_rgba(0,59,92,0.06)] transition-[box-shadow,transform,border-color] duration-300 hover:-translate-y-1 hover:border-primary/40 hover:shadow-[0_16px_32px_-14px_rgba(0,59,92,0.28)]"
+      >
+        <div className="relative aspect-[4/3] overflow-hidden bg-primary-soft">
+          <CategoryProductImage
+            src={category.imageUrl}
+            alt={`${category.name} pump`}
+            fill
+            sizes="(min-width: 1280px) 30vw, (min-width: 640px) 45vw, 100vw"
+            className="absolute inset-0 h-full w-full object-contain p-6 transition-transform duration-300 group-hover:scale-105"
+            fallbackLabel="Image coming soon"
+          />
+        </div>
+        <div className="flex flex-1 flex-col border-t border-line p-5 sm:p-6">
+          <p className="text-[11px] font-bold tracking-[0.16em] text-primary uppercase">{category.name}</p>
+          <h3 className="mt-1.5 font-display text-lg leading-snug font-bold text-primary-deep transition-colors group-hover:text-primary">
+            {category.name}
+          </h3>
+          <p className="mt-2 line-clamp-3 min-h-[3.75rem] text-sm leading-relaxed text-muted">
+            {category.description}
+          </p>
+          <div className="mt-auto flex flex-wrap items-center justify-between gap-x-3 gap-y-2 pt-5">
+            <span className="text-sm font-medium text-muted">
+              {category.productCount} Product{category.productCount === 1 ? "" : "s"}
+            </span>
+            <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-primary transition-all group-hover:gap-2.5">
+              View Products
+              <ArrowRight aria-hidden="true" className="size-4" />
+            </span>
           </div>
         </div>
-      </div>
-    </Link>
-  );
-}
-
-function ProductsPageSkeleton() {
-  return (
-    <div className="animate-pulse" aria-hidden="true">
-      <div className="grid gap-6 md:grid-cols-2 lg:gap-7">
-        {Array.from({ length: 2 }).map((_, i) => (
-          <div
-            key={i}
-            className="min-h-[360px] overflow-hidden rounded-[22px] border border-[#D8E7F2] bg-[#F8FBFE]"
-          >
-            <div className="h-full w-full bg-[linear-gradient(135deg,#FFFFFF_0%,#EAF4FC_100%)] p-8">
-              <div className="h-12 w-12 rounded-xl bg-[#E4F2FB]" />
-              <div className="mt-6 h-7 w-3/4 rounded bg-[#DCE8F1]" />
-              <div className="mt-4 h-4 w-full rounded bg-[#E7EFF5]" />
-              <div className="mt-2 h-4 w-2/3 rounded bg-[#E7EFF5]" />
-              <div className="mt-12 h-10 w-36 rounded-full bg-accent/70" />
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
+      </Link>
+    </li>
   );
 }
 
@@ -192,7 +140,7 @@ function Notice({ children, tone = "info" }: { children: ReactNode; tone?: "info
       className={`rounded-xl border p-5 text-sm ${
         tone === "error"
           ? "border-red-200 bg-red-50 text-red-800"
-          : "border-accent/40 bg-accent-soft text-primary-deep"
+          : "border-line bg-white text-muted"
       }`}
       role={tone === "error" ? "alert" : "status"}
     >
@@ -201,51 +149,104 @@ function Notice({ children, tone = "info" }: { children: ReactNode; tone?: "info
   );
 }
 
-async function MainCategoriesSection() {
-  const { categories, error } = await getCategoriesResult();
-
-  const mainCategories = categories
-    .filter((category) => category.level === 0 && category.isActive !== false)
-    .filter((category) => Boolean(CARD_PRESENTATION[category.slug]))
-    .sort(
-      (a, b) =>
-        CARD_PRESENTATION[a.slug].order - CARD_PRESENTATION[b.slug].order ||
-        a.name.localeCompare(b.name),
-    );
-
+function ProductsPageSkeleton() {
   return (
-    <section aria-labelledby="main-categories-heading" className="bg-white py-14 sm:py-20">
+    <div className="animate-pulse" aria-hidden="true">
+      {MAIN_CATEGORY_SLUGS.map((slug, idx) => (
+        <section key={slug} className="bg-white py-14 sm:py-20" aria-labelledby={`main-category-heading-${idx}`}>
+          <div className="mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8">
+            <div className="mx-auto mb-10 max-w-2xl text-center sm:mb-12">
+              <div className="mx-auto h-8 w-3/4 rounded bg-line/30" />
+              <div className="mt-3 mx-auto h-4 w-full rounded bg-line/30" />
+              <div className="mt-2 mx-auto h-4 w-2/3 rounded bg-line/30" />
+            </div>
+            <ul className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 lg:gap-8 xl:grid-cols-4">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <li key={i} className="overflow-hidden rounded-2xl border border-line bg-white">
+                  <div className="aspect-[4/3] bg-primary-soft/60" />
+                  <div className="p-5 sm:p-6">
+                    <div className="h-3 w-2/3 rounded bg-line/30" />
+                    <div className="mt-3 h-5 w-4/5 rounded bg-line/30" />
+                    <div className="mt-3 h-4 w-full rounded bg-line/30" />
+                    <div className="mt-2 h-4 w-5/6 rounded bg-line/30" />
+                    <div className="mt-6 h-4 w-1/2 rounded bg-line/30" />
+                  </div>
+                </li>
+              ))}
+            </ul>
+            {idx === 0 && <hr className="my-16 border-line/50" />}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+async function MainCategorySection({
+  mainCategory,
+  productTypeCategories,
+  index,
+}: {
+  mainCategory: PublicCategory;
+  productTypeCategories: ProductTypeCategory[];
+  index: number;
+}) {
+  return (
+    <section aria-labelledby={`main-category-heading-${index}`} className="bg-white py-14 sm:py-20">
       <div className="mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8">
         <div className="mx-auto mb-10 max-w-2xl text-center sm:mb-12">
           <h2
-            id="main-categories-heading"
-            className="font-display text-2xl font-bold tracking-tight text-primary-deep sm:text-[34px] sm:leading-tight"
+            id={`main-category-heading-${index}`}
+            className="font-display text-2xl font-bold tracking-tight text-primary-deep sm:text-3xl"
           >
-            Product Categories
+            {mainCategory.name}
           </h2>
-          <span aria-hidden="true" className="mx-auto mt-4 block h-1 w-14 rounded-full bg-accent" />
-          <p className="mt-4 text-[15px] leading-relaxed text-muted sm:text-lg">
-            Select a main category to explore our product range.
-          </p>
+          <span aria-hidden="true" className="mx-auto mt-3 block h-1 w-14 rounded-full bg-accent" />
+          {mainCategory.description && (
+            <p className="mt-4 text-lg text-muted">{mainCategory.description}</p>
+          )}
         </div>
 
-        {error ? (
-          <Notice tone="error">
-            We could not load product categories right now. Please try again shortly.
-          </Notice>
-        ) : mainCategories.length === 0 ? (
-          <Notice>
-            The product category catalogue is being prepared. Please check back shortly.
-          </Notice>
-        ) : (
-          <div className="grid gap-6 md:grid-cols-2 lg:gap-7">
-            {mainCategories.map((category) => (
-              <MainCategoryCard key={category.id} category={category} />
+        {productTypeCategories.length > 0 ? (
+          <ul className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 lg:gap-8 xl:grid-cols-4">
+            {productTypeCategories.map((category) => (
+              <ProductTypeCategoryCard key={category.id} category={category} />
             ))}
-          </div>
+          </ul>
+        ) : (
+          <Notice>No product types are available in this category yet.</Notice>
         )}
+
+        {index === 0 && <hr className="my-16 border-line/50" />}
       </div>
     </section>
+  );
+}
+
+async function ProductsContent() {
+  const { mainCategoryData, categoryError } = await getProductsPageData();
+
+  if (categoryError) {
+    return (
+      <section className="bg-white py-14 sm:py-20">
+        <div className="mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8">
+          <Notice tone="error">We could not load product categories right now. Please try again shortly.</Notice>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <>
+      {mainCategoryData.map(({ mainCategory, productTypeCategories }, index) => (
+        <MainCategorySection
+          key={mainCategory.id}
+          mainCategory={mainCategory}
+          productTypeCategories={productTypeCategories}
+          index={index}
+        />
+      ))}
+    </>
   );
 }
 
@@ -269,7 +270,7 @@ export default function ProductsPage() {
       />
 
       <Suspense fallback={<ProductsPageSkeleton />}>
-        <MainCategoriesSection />
+        <ProductsContent />
       </Suspense>
     </>
   );

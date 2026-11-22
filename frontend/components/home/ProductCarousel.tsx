@@ -7,34 +7,9 @@ import type { ProductSummary } from "@/lib/products";
 import ProductImage from "@/components/products/ProductImage";
 import { cn } from "@/lib/utils";
 
-const ANIMATION_DURATION = 45;
 const CARD_WIDTH = 280;
 const GAP = 24;
-
-const KEYFRAMES_ID = "product-carousel-keyframes";
-
-function injectKeyframes(shift: number) {
-  if (typeof document === "undefined") return;
-
-  if (document.getElementById(KEYFRAMES_ID)) return;
-
-  const style = document.createElement("style");
-  style.id = KEYFRAMES_ID;
-  style.textContent = `
-    @keyframes product-carousel {
-      from { transform: translateX(0); }
-      to { transform: translateX(${shift}px); }
-    }
-  `;
-  document.head.appendChild(style);
-}
-
-function removeKeyframes() {
-  if (typeof document === "undefined") return;
-  
-  const existing = document.getElementById(KEYFRAMES_ID);
-  if (existing) existing.remove();
-}
+const ANIMATION_SPEED = 0.5;
 
 export default function ProductCarousel({ products }: { products: ProductSummary[] }) {
   const [paused, setPaused] = useState(false);
@@ -42,12 +17,11 @@ export default function ProductCarousel({ products }: { products: ProductSummary
     () => typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches,
   );
   const carouselRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    removeKeyframes();
-    injectKeyframes(-(products.length * (CARD_WIDTH + GAP)));
-    return removeKeyframes;
-  }, [products.length]);
+  const trackRef = useRef<HTMLDivElement>(null);
+  const animationRef = useRef<number | null>(null);
+  const offsetRef = useRef(0);
+  const lastTimeRef = useRef<number | null>(null);
+  const singleSetWidthRef = useRef(0);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -71,6 +45,66 @@ export default function ProductCarousel({ products }: { products: ProductSummary
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
   }, []);
 
+  useEffect(() => {
+    if (products.length > 0) {
+      singleSetWidthRef.current = products.length * (CARD_WIDTH + GAP);
+    }
+  }, [products.length]);
+
+  const animate = (timestamp: number) => {
+    if (paused || reducedMotion) {
+      lastTimeRef.current = timestamp;
+      animationRef.current = requestAnimationFrame(animate);
+      return;
+    }
+
+    if (lastTimeRef.current === null) {
+      lastTimeRef.current = timestamp;
+      animationRef.current = requestAnimationFrame(animate);
+      return;
+    }
+
+    const deltaTime = timestamp - lastTimeRef.current;
+    lastTimeRef.current = timestamp;
+
+    const distance = ANIMATION_SPEED * deltaTime;
+    offsetRef.current -= distance;
+
+    if (offsetRef.current <= -singleSetWidthRef.current) {
+      offsetRef.current += singleSetWidthRef.current;
+    }
+
+    if (trackRef.current) {
+      trackRef.current.style.transform = `translateX(${offsetRef.current}px)`;
+    }
+
+    animationRef.current = requestAnimationFrame(animate);
+  };
+
+  useEffect(() => {
+    if (reducedMotion) {
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+        animationRef.current = null;
+      }
+      if (trackRef.current) {
+        trackRef.current.style.transform = "translateX(0)";
+      }
+      offsetRef.current = 0;
+      lastTimeRef.current = null;
+      return;
+    }
+
+    animationRef.current = requestAnimationFrame(animate);
+
+    return () => {
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+        animationRef.current = null;
+      }
+    };
+  }, [paused, reducedMotion, products.length]);
+
   const handleMouseEnter = () => {
     if (!reducedMotion) setPaused(true);
   };
@@ -87,27 +121,31 @@ export default function ProductCarousel({ products }: { products: ProductSummary
     if (!reducedMotion) setPaused(false);
   };
 
-  const duplicatedProducts = [...products, ...products];
+  const duplicatedProducts = [...products, ...products, ...products, ...products];
 
   return (
     <section aria-label="Top Products" className="bg-white py-20 sm:py-24">
       <div className="mx-auto w-full max-w-[1450px] px-4 sm:px-6 lg:px-8">
-        <div className="max-w-3xl">
-          <div className="flex items-center gap-3">
-            <span aria-hidden="true" className="h-1 w-10 rounded-full bg-accent flex-shrink-0" />
-            <p className="text-xs font-bold uppercase tracking-[0.25em] text-primary">
-              TOP PRODUCTS
+        {/* Centered heading group */}
+        <div className="max-w-3xl mx-auto">
+          <div className="text-center">
+            <div className="flex items-center justify-center gap-3">
+              <span aria-hidden="true" className="h-1 w-10 rounded-full bg-accent flex-shrink-0" />
+              <p className="text-xs font-bold uppercase tracking-[0.25em] text-primary">
+                TOP PRODUCTS
+              </p>
+            </div>
+            <h2 className="mt-4 font-display text-3xl sm:text-4xl font-extrabold leading-[1.1] tracking-tight text-primary-deep">
+              Pumps We Manufacture
+            </h2>
+            <span aria-hidden="true" className="mt-3 block h-1 w-16 rounded-full bg-accent mx-auto" />
+            <p className="mt-6 text-base leading-relaxed text-muted max-w-2xl mx-auto">
+              A selection from the complete range of positive displacement pumps produced at our facility.
             </p>
           </div>
-          <h2 className="mt-4 font-display text-3xl sm:text-4xl font-extrabold leading-[1.1] tracking-tight text-primary-deep">
-            Pumps We Manufacture
-          </h2>
-          <span aria-hidden="true" className="mt-3 block h-1 w-16 rounded-full bg-accent" />
-          <p className="mt-6 text-base leading-relaxed text-muted max-w-2xl">
-            A selection from the complete range of positive displacement pumps produced at our facility.
-          </p>
         </div>
 
+        {/* Full-width carousel viewport */}
         <div
           ref={carouselRef}
           className="relative mt-14 overflow-hidden"
@@ -117,12 +155,11 @@ export default function ProductCarousel({ products }: { products: ProductSummary
           onTouchEnd={handleTouchEnd}
         >
           <div
+            ref={trackRef}
             className="flex gap-6"
             style={{
-              animation: reducedMotion || paused
-                ? "none"
-                : `product-carousel ${ANIMATION_DURATION}s linear infinite`,
               width: "max-content",
+              willChange: "transform",
             }}
           >
             {duplicatedProducts.map((product, index) => (

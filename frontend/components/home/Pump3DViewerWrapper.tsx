@@ -20,7 +20,19 @@ const Pump3DViewerDynamic = dynamic(
   }
 );
 
-export default function Pump3DViewerWrapper() {
+interface Pump3DViewerWrapperProps {
+  showLabels?: boolean;
+  autoRotateSpeed?: number;
+  className?: string;
+  style?: React.CSSProperties;
+}
+
+export default function Pump3DViewerWrapper({
+  showLabels = true,
+  autoRotateSpeed = 1.2,
+  className = "",
+  style,
+}: Pump3DViewerWrapperProps) {
   const [isClient, setIsClient] = useState(false);
 
   useEffect(() => {
@@ -41,5 +53,12 @@ export default function Pump3DViewerWrapper() {
     );
   }
 
-  return <Pump3DViewerDynamic />;
+  return (
+    <Pump3DViewerDynamic
+      showLabels={showLabels}
+      autoRotateSpeed={autoRotateSpeed}
+      className={className}
+      style={style}
+    />
+  );
 }
