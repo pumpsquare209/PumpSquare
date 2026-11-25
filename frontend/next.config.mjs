@@ -1,9 +1,7 @@
-import type { NextConfig } from "next";
-
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const backendUrl = process.env.BACKEND_URL;
 
-function getHostname(url: string | undefined): string | undefined {
+function getHostname(url) {
   if (!url) return undefined;
   try {
     return new URL(url).hostname;
@@ -17,14 +15,10 @@ const backendHostname = getHostname(backendUrl);
 
 const remotePatterns = [
   // Allow any Supabase Storage subdomain (e.g., vqzuvjubeohfsixguzpa.supabase.co)
-  { protocol: "https" as const, hostname: "*.supabase.co" },
+  { protocol: "https", hostname: "*.supabase.co" },
   // Also include the explicit hostname from env if present
-  ...(supabaseHostname ? [{ protocol: "https" as const, hostname: supabaseHostname }] : []),
-  ...(backendHostname
-    ? [
-        { protocol: "https" as const, hostname: backendHostname },
-      ]
-    : []),
+  ...(supabaseHostname ? [{ protocol: "https", hostname: supabaseHostname }] : []),
+  ...(backendHostname ? [{ protocol: "https", hostname: backendHostname }] : []),
 ];
 
 // Multi-megabyte 3D assets under /public are served with `max-age=0` by default,
@@ -37,7 +31,8 @@ const immutableAssetHeaders = [
   },
 ];
 
-const nextConfig: NextConfig = {
+/** @type {import("next").NextConfig} */
+const nextConfig = {
   images: {
     remotePatterns,
   },
