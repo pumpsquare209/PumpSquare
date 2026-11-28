@@ -3,8 +3,9 @@
 import { RotateCcw } from "lucide-react";
 import * as THREE from "three";
 import { OptimizedCanvas } from "../three/OptimizedCanvas";
-import { PUMP_MODELS } from "@/lib/modelAssets";
 
+const DESKTOP_MODEL_PATH = "/models/pumpsquare-pump.glb";
+const MOBILE_MODEL_PATH = "/models/pumpsquare-pump-mobile-test.glb";
 const FALLBACK_IMAGE = "/images/pumpsquare-pump-clean.png";
 
 const DEFAULT_CAMERA_POSITION = new THREE.Vector3(0, 0.1, 2.8);
@@ -25,8 +26,8 @@ export default function Pump3DViewer({
 }: Pump3DViewerProps) {
   return (
     <OptimizedCanvas
-      desktopModelPath={PUMP_MODELS.desktop}
-      mobileModelPath={PUMP_MODELS.mobile}
+      desktopModelPath={DESKTOP_MODEL_PATH}
+      mobileModelPath={MOBILE_MODEL_PATH}
       defaultCameraPosition={DEFAULT_CAMERA_POSITION}
       defaultModelScale={DEFAULT_MODEL_SCALE}
       fallbackImage={FALLBACK_IMAGE}
